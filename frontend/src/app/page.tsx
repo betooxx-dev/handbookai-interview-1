@@ -3,12 +3,15 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/auth.store';
 import { AuthForm, ChatList, ChatWindow, WorkflowVisualization } from '@/components';
-import { chatApi } from '@/services/chat.service';
+import { ChatService } from '@/services/chat.service';
 import '../styles/globals.css';
 import styles from './page.module.css';
 
 export default function Home() {
-  const { user, isLoading, logout, checkAuth } = useAuthStore();
+  const user = useAuthStore((state) => state.user);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const logout = useAuthStore((state) => state.logout);
+  const checkAuth = useAuthStore((state) => state.checkAuth);
   const [selectedChatId, setSelectedChatId] = useState<number | null>(null);
   const [workflowData, setWorkflowData] = useState<string | null>(null);
   const [currentMessageId, setCurrentMessageId] = useState<number | null>(null);
@@ -21,28 +24,18 @@ export default function Home() {
   const handlePositionChange = async (updatedWorkflow: string) => {
     if (currentMessageId) {
       try {
-        await chatApi.updateWorkflowPositions(currentMessageId, updatedWorkflow);
+        await ChatService.updateWorkflowPositions(currentMessageId, updatedWorkflow);
       } catch (error) {
         console.error('Failed to save positions:', error);
       }
     }
   };
 
-
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
 
-  if (isLoading) {
-    return (
-      <div className={styles.loading}>
-        <div className={styles.spinner}></div>
-        <p>Loading...</p>
-      </div>
-    );
-  }
-
-  if (!user) {
+  if (!isAuthenticated) {
     return <AuthForm />;
   }
 
@@ -51,7 +44,7 @@ export default function Home() {
       <header className={styles.header}>
         <h1>Workflow AI Assistant</h1>
         <div className={styles.userInfo}>
-          <span>Welcome, {user.username}</span>
+          <span>Welcome, {user?.username}</span>
           <button onClick={() => {
             setSelectedChatId(null);
             setWorkflowData(null);

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { useAuthStore } from '@/store/auth.store';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -7,8 +8,8 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config: any) => {
-    const token = localStorage.getItem('token');
-    if (token) config.headers.Authorization = `Bearer ${token}`;
+    const token = useAuthStore.getState().token;
+    if (token) config.headers["Authorization"] = `Bearer ${token}`;
     return config;
 });
 

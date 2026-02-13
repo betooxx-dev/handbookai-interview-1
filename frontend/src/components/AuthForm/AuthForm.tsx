@@ -12,7 +12,8 @@ export default function AuthForm() {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
-    const { login, register } = useAuthStore();
+    const login = useAuthStore((state) => state.login);
+    const register = useAuthStore((state) => state.register);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

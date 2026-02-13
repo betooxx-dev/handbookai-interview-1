@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { chatApi } from '@/services/chat.service';
+import { ChatService } from '@/services/chat.service';
 import { Chat } from '@/types';
 import styles from './styles.module.css';
 
@@ -20,7 +20,7 @@ export default function ChatList({ onSelectChat, selectedChatId }: ChatListProps
 
     const loadChats = async () => {
         try {
-            const data = await chatApi.getChats();
+            const data = await ChatService.getChats();
             setChats(data);
         } catch (error) {
             console.error('Failed to load chats:', error);
@@ -31,7 +31,7 @@ export default function ChatList({ onSelectChat, selectedChatId }: ChatListProps
 
     const handleNewChat = async () => {
         try {
-            const newChat = await chatApi.createChat('New Conversation');
+            const newChat = await ChatService.createChat('New Conversation');
             setChats([newChat, ...chats]);
             onSelectChat(newChat.id);
         } catch (error) {
@@ -44,7 +44,7 @@ export default function ChatList({ onSelectChat, selectedChatId }: ChatListProps
         if (!confirm('Delete this chat?')) return;
 
         try {
-            await chatApi.deleteChat(chatId);
+            await ChatService.deleteChat(chatId);
             const updatedChats = chats.filter(chat => chat.id !== chatId);
             setChats(updatedChats);
 

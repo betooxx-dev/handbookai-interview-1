@@ -26,9 +26,11 @@ export interface ChatWithMessages extends Chat {
 }
 
 export interface AuthState {
-    user: User | null;
-    token: string | null;
-    isLoading: boolean;
+    isAuthenticated: boolean;
+    user?: User;
+    token?: string;
+    errors: string[];
+
     login: (username: string, password: string) => Promise<void>;
     register: (username: string, email: string, password: string) => Promise<void>;
     logout: () => void;

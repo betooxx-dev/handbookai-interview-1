@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { chatApi } from '@/services/chat.service';
+import { ChatService } from '@/services/chat.service';
 import { Message } from '@/types';
 import styles from './styles.module.css';
 
@@ -37,7 +37,7 @@ export default function ChatWindow({ chatId, onWorkflowUpdate }: ChatWindowProps
         if (!chatId) return;
 
         try {
-            const chat = await chatApi.getChat(chatId);
+            const chat = await ChatService.getChat(chatId);
             setMessages(chat.messages);
 
             // Update workflow with latest assistant message that has workflow data
@@ -67,7 +67,7 @@ export default function ChatWindow({ chatId, onWorkflowUpdate }: ChatWindowProps
         setMessages(prev => [...prev, tempUserMessage]);
 
         try {
-            const response = await chatApi.sendMessage(chatId, userMessage);
+            const response = await ChatService.sendMessage(chatId, userMessage);
             await loadMessages(); // This will reload with real data from server
 
             // Update workflow if present
@@ -95,7 +95,7 @@ export default function ChatWindow({ chatId, onWorkflowUpdate }: ChatWindowProps
 
         setLoading(true);
         try {
-            const result = await chatApi.undoWorkflow(chatId);
+            const result = await ChatService.undoWorkflow(chatId);
             await loadMessages(); // Reload messages after undo
 
             // Update workflow to previous version or null
