@@ -1,14 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useAuthStore } from '@/lib/store';
-import AuthForm from '@/components/AuthForm';
-import ChatList from '@/components/ChatList';
-import ChatWindow from '@/components/ChatWindow';
-import WorkflowVisualization from '@/components/WorkflowVisualization';
+import { useAuthStore } from '@/store/auth.store';
+import { AuthForm, ChatList, ChatWindow, WorkflowVisualization } from '@/components';
+import { chatApi } from '@/services/chat.service';
 import '../styles/globals.css';
 import styles from './page.module.css';
-import { chatApi } from '@/lib/api';
 
 export default function Home() {
   const { user, isLoading, logout, checkAuth } = useAuthStore();
@@ -22,13 +19,13 @@ export default function Home() {
   };
 
   const handlePositionChange = async (updatedWorkflow: string) => {
-  if (currentMessageId) {
+    if (currentMessageId) {
       try {
         await chatApi.updateWorkflowPositions(currentMessageId, updatedWorkflow);
       } catch (error) {
         console.error('Failed to save positions:', error);
       }
-  }
+    }
   };
 
 
@@ -81,8 +78,8 @@ export default function Home() {
         </div>
 
         <div className={styles.workflowSection}>
-          <WorkflowVisualization 
-            workflowData={workflowData} 
+          <WorkflowVisualization
+            workflowData={workflowData}
             chatId={selectedChatId}
             onPositionChange={handlePositionChange}
           />
