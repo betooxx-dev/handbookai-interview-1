@@ -14,6 +14,8 @@ class Settings:
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "http://frontend:3000",
+        "https://handbook-frontend-edku2o-23d9de-192-99-145-226.traefik.me",
+        "https://handbook-frontend.zifra.mx"
     ]
 
 
