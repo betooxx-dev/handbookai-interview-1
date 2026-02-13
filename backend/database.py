@@ -34,9 +34,7 @@ if not DATABASE_URL:
         DATABASE_URL = f"mysql+pymysql://{mysql_user}:{mysql_password}@{mysql_host}:{mysql_port}/{mysql_database}"
         print(f"Constructed DATABASE_URL from MySQL vars")
     else:
-        # Fallback to local development
-        DATABASE_URL = "mysql+pymysql://root:password@localhost:3306/handbook_db"
-        print("Using local development DATABASE_URL")
+        raise ValueError("DATABASE_URL is not set. Please configure your backend/.env file.")
 
 # Railway uses postgres:// but SQLAlchemy needs postgresql://
 if DATABASE_URL.startswith("postgres://"):
