@@ -48,6 +48,15 @@ def delete_chat(
     return ChatController.delete_chat(chat_id, current_user, db)
 
 
+@router.get("/{chat_id}/members")
+def get_members(
+    chat_id: int,
+    current_user: User = Depends(AuthService.get_current_user),
+    db: Session = Depends(get_db),
+):
+    return ChatController.get_members(chat_id, current_user, db)
+
+
 @router.delete("/{chat_id}/members/{user_id}")
 async def remove_member(
     chat_id: int,

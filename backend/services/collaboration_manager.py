@@ -143,8 +143,10 @@ class CollaborationManager:
 
     async def join_session(
         self, code: str, user_id: int, username: str, ws: WebSocket, db: Session
-    ) -> Optional[ActiveSession]:
-        """Add a user to a session. Returns None if session not found or full."""
+    ) -> tuple[Optional[ActiveSession], bool]:
+        """Add a user to a session. Returns (session, is_new_member). Session is None if not found or full."""
+        is_new_member = False
+
         # Look up session in DB if not in memory
         if code not in self._sessions:
             db_session = (
@@ -156,7 +158,7 @@ class CollaborationManager:
                 .first()
             )
             if not db_session:
-                return None
+                return None, False
 
             # Reconstruct in-memory session
             last_workflow_msg = (
@@ -192,7 +194,7 @@ class CollaborationManager:
 
         if not existing_member:
             if member_count >= 3:
-                return None
+                return None, False
             # Add as collaborator in DB
             new_member = ChatMember(
                 chat_id=session.chat_id,
@@ -201,9 +203,10 @@ class CollaborationManager:
             )
             db.add(new_member)
             db.commit()
+            is_new_member = True
 
         session.connections[user_id] = {"ws": ws, "username": username}
-        return session
+        return session, is_new_member
 
     async def leave_session(self, code: str, user_id: int):
         """Remove a user's WebSocket connection from a session. Do NOT destroy the session."""

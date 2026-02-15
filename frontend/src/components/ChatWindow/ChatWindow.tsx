@@ -8,6 +8,7 @@ import styles from './styles.module.css';
 interface ChatWindowProps {
     chatId: number | null;
     onWorkflowUpdate: (workflowData: string | null, messageId?: number) => void;
+    onTitleUpdate?: (chatId: number, title: string) => void;
     isCollaborating?: boolean;
     onSendCollabMessage?: (content: string) => void;
     remoteMessages?: Message[];
@@ -18,6 +19,7 @@ interface ChatWindowProps {
 export default function ChatWindow({
     chatId,
     onWorkflowUpdate,
+    onTitleUpdate,
     isCollaborating = false,
     onSendCollabMessage,
     remoteMessages,
@@ -124,6 +126,10 @@ export default function ChatWindow({
 
             if (response.workflow_data) {
                 onWorkflowUpdate(response.workflow_data, response.id);
+            }
+
+            if (response.chat_title && onTitleUpdate) {
+                onTitleUpdate(chatId, response.chat_title);
             }
         } catch (error) {
             console.error('Failed to send message:', error);

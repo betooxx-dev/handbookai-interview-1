@@ -85,21 +85,27 @@ class WorkflowService:
         db.refresh(user_message)
 
         # Auto-title on first message
+        new_title = None
         if chat.title == "New Conversation":
             message_count = db.query(Message).filter(Message.chat_id == chat_id).count()
             if message_count == 1:
-                title = content[:50]
+                new_title = content[:50]
                 if len(content) > 50:
-                    title = title.rsplit(" ", 1)[0] + "..."
-                chat.title = title
+                    new_title = new_title.rsplit(" ", 1)[0] + "..."
+                chat.title = new_title
                 db.commit()
 
         # Generate AI response
         try:
-            return WorkflowService._generate_ai_response(chat_id, content, db)
+            ai_message = WorkflowService._generate_ai_response(chat_id, content, db)
         except Exception as e:
             print(f"OpenAI Error: {type(e).__name__}: {str(e)}")
-            return WorkflowService._create_fallback_message(chat_id, str(e), db)
+            ai_message = WorkflowService._create_fallback_message(chat_id, str(e), db)
+
+        if new_title:
+            ai_message.chat_title = new_title
+
+        return ai_message
 
     @staticmethod
     def update_workflow(message_id: int, workflow_data: dict, user_id: int, db: Session) -> dict:

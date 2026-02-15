@@ -3,7 +3,7 @@ from typing import List
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from models import Chat, ChatMember
+from models import Chat, ChatMember, User
 
 
 class ChatService:
@@ -88,6 +88,25 @@ class ChatService:
         db.delete(chat)
         db.commit()
         return {"message": "Chat deleted successfully"}
+
+    @staticmethod
+    def get_members(chat_id: int, user_id: int, db: Session) -> List[dict]:
+        """Return all members of a chat. Only accessible by chat members."""
+        membership = (
+            db.query(ChatMember)
+            .filter(ChatMember.chat_id == chat_id, ChatMember.user_id == user_id)
+            .first()
+        )
+        if not membership:
+            raise HTTPException(status_code=404, detail="Chat not found")
+
+        members = (
+            db.query(User.id, User.username, ChatMember.role)
+            .join(ChatMember, ChatMember.user_id == User.id)
+            .filter(ChatMember.chat_id == chat_id)
+            .all()
+        )
+        return [{"id": m.id, "username": m.username, "role": m.role} for m in members]
 
     @staticmethod
     def remove_member(chat_id: int, owner_id: int, target_user_id: int, db: Session) -> dict:

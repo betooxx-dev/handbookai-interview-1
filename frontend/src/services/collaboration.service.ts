@@ -23,6 +23,16 @@ export class CollaborationService {
         }
     };
 
+    static getMembers = async (chatId: number) => {
+        try {
+            const { data } = await api.get<{ id: number; username: string; role: string }[]>(`/chats/${chatId}/members`);
+            return data;
+        } catch (error) {
+            console.log(error);
+            throw new Error('An error occurred while getting members');
+        }
+    };
+
     static removeMember = async (chatId: number, userId: number) => {
         try {
             const { data } = await api.delete(`/chats/${chatId}/members/${userId}`);

@@ -20,6 +20,7 @@ export interface Message {
     role: 'user' | 'assistant';
     content: string;
     workflow_data?: string;
+    chat_title?: string;
     created_at: string;
 }
 
@@ -54,6 +55,7 @@ export interface CollaborationPanelProps {
     onJoinSession: (code: string) => Promise<void>;
     onLeaveSession: () => void;
     onKickUser?: (userId: number) => void;
+    refreshMembersKey?: number;
 }
 
 export interface LockedNode {
@@ -95,4 +97,5 @@ export interface CollaborationCallbacks {
     onKicked?: () => void;
     onConnectedToChat?: (chatId: number) => void;
     onTitleUpdate?: (chatId: number, title: string) => void;
+    onMemberAdded?: (chatId: number) => void;
 }

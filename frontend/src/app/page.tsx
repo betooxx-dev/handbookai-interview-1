@@ -24,11 +24,17 @@ export default function Home() {
   const [hasMounted, setHasMounted] = useState(false);
   const [chats, setChats] = useState<Chat[]>([]);
   const [refreshChatsKey, setRefreshChatsKey] = useState(0);
+  const [refreshMembersKey, setRefreshMembersKey] = useState(0);
 
   const handleWorkflowUpdate = (data: string | null, messageId?: number) => {
     setWorkflowData(data);
     if (messageId) setCurrentMessageId(messageId);
   };
+
+  const handleTitleUpdate = useCallback((chatId: number, title: string) => {
+    setChats((prev) => prev.map((c) => c.id === chatId ? { ...c, title } : c));
+    setRefreshChatsKey((k) => k + 1);
+  }, []);
 
   const collaboration = useCollaboration({
     onRemoteWorkflowUpdate: (data, fromUser) => {
@@ -77,10 +83,9 @@ export default function Home() {
         setSelectedChatId(chatId);
       }
     },
-    onTitleUpdate: (chatId, title) => {
-      // Update local chats array and refresh ChatList
-      setChats((prev) => prev.map((c) => c.id === chatId ? { ...c, title } : c));
-      setRefreshChatsKey((k) => k + 1);
+    onTitleUpdate: handleTitleUpdate,
+    onMemberAdded: () => {
+      setRefreshMembersKey((k) => k + 1);
     },
   });
 
@@ -101,13 +106,26 @@ export default function Home() {
       collaboration.leaveSession();
     }
 
-    setSelectedChatId(chatId);
     setRemoteMessages([]);
 
     if (!chatId) {
+      setSelectedChatId(null);
       setSelectedChatRole(null);
       return;
     }
+
+    // Verify the user is still a member by fetching the chat
+    try {
+      await ChatService.getChat(chatId);
+    } catch {
+      // User is no longer a member of this chat
+      setSelectedChatId(null);
+      setSelectedChatRole(null);
+      await reloadAllChats();
+      return;
+    }
+
+    setSelectedChatId(chatId);
 
     const chat = chats.find((c) => c.id === chatId);
     const role = chat?.role || 'owner';
@@ -202,6 +220,7 @@ export default function Home() {
           <ChatWindow
             chatId={selectedChatId}
             onWorkflowUpdate={handleWorkflowUpdate}
+            onTitleUpdate={handleTitleUpdate}
             isCollaborating={collaboration.isConnected}
             onSendCollabMessage={collaboration.sendChatMessage}
             remoteMessages={remoteMessages}
@@ -222,6 +241,7 @@ export default function Home() {
               onJoinSession={collaboration.joinSession}
               onLeaveSession={collaboration.leaveSession}
               onKickUser={collaboration.kickUser}
+              refreshMembersKey={refreshMembersKey}
             />
           </div>
           <WorkflowVisualization

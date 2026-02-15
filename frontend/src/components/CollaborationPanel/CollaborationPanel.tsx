@@ -1,9 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import styles from './styles.module.css';
 import { CollaborationPanelProps } from "@/types";
 import { CollaborationService } from '@/services/collaboration.service';
+import { useAuthStore } from '@/store/auth.store';
+
+interface ChatMember {
+    id: number;
+    username: string;
+    role: string;
+}
 
 export default function CollaborationPanel({
     chatId,
@@ -14,11 +21,32 @@ export default function CollaborationPanel({
     onCreateSession,
     onLeaveSession,
     onKickUser,
+    refreshMembersKey,
 }: CollaborationPanelProps) {
+    const currentUser = useAuthStore((state) => state.user);
     const [loading, setLoading] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [members, setMembers] = useState<ChatMember[]>([]);
 
     const isOwner = chatRole === 'owner';
+
+    useEffect(() => {
+        if (chatId) {
+            loadMembers();
+        } else {
+            setMembers([]);
+        }
+    }, [chatId, refreshMembersKey, users.length]);
+
+    const loadMembers = async () => {
+        if (!chatId) return;
+        try {
+            const data = await CollaborationService.getMembers(chatId);
+            setMembers(data);
+        } catch (error) {
+            console.error('Failed to load members:', error);
+        }
+    };
 
     const handleCreate = async () => {
         if (!chatId) return;
@@ -46,12 +74,17 @@ export default function CollaborationPanel({
         try {
             await CollaborationService.removeMember(chatId, userId);
             if (onKickUser) onKickUser(userId);
+            setMembers((prev) => prev.filter((m) => m.id !== userId));
         } catch (error) {
             console.error('Failed to kick user:', error);
         }
     };
 
     if (!chatId) return null;
+
+    const collaborators = members.filter(
+        (m) => m.role === 'collaborator' && m.id !== currentUser?.id
+    );
 
     if (isConnected && sessionCode) {
         return (
@@ -65,13 +98,13 @@ export default function CollaborationPanel({
                         </button>
                     </div>
                     <div className={styles.usersSection}>
-                        {users.map((user) => (
-                            <span key={user.id} className={styles.userBadge}>
-                                {user.username}
-                                {isOwner && onKickUser && (
+                        {members.map((member) => (
+                            <span key={member.id} className={styles.userBadge}>
+                                {member.username}
+                                {isOwner && member.id !== currentUser?.id && (
                                     <button
                                         className={styles.kickButton}
-                                        onClick={() => handleKickUser(user.id)}
+                                        onClick={() => handleKickUser(member.id)}
                                         title="Remove user"
                                     >
                                         ×
@@ -81,9 +114,11 @@ export default function CollaborationPanel({
                         ))}
                     </div>
                 </div>
-                <button className={styles.leaveButton} onClick={onLeaveSession}>
-                    Leave
-                </button>
+                {!isOwner && (
+                    <button className={styles.leaveButton} onClick={onLeaveSession}>
+                        Leave
+                    </button>
+                )}
             </div>
         );
     }
@@ -97,6 +132,22 @@ export default function CollaborationPanel({
             >
                 {loading ? '...' : '🤝 Collaborate'}
             </button>
+            {isOwner && collaborators.length > 0 && (
+                <div className={styles.usersSection}>
+                    {collaborators.map((member) => (
+                        <span key={member.id} className={styles.userBadge}>
+                            {member.username}
+                            <button
+                                className={styles.kickButton}
+                                onClick={() => handleKickUser(member.id)}
+                                title="Remove user"
+                            >
+                                ×
+                            </button>
+                        </span>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }

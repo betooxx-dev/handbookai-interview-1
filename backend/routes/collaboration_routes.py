@@ -80,7 +80,7 @@ async def collaborate_websocket(
         return
 
     # Join session (now also handles DB membership)
-    session = await collaboration_manager.join_session(code, user.id, user.username, websocket, db)
+    session, is_new_member = await collaboration_manager.join_session(code, user.id, user.username, websocket, db)
     if not session:
         await websocket.accept()
         await websocket.send_json({"type": "error", "message": "Session not found or full (max 3 users)"})
@@ -107,6 +107,17 @@ async def collaborate_websocket(
         {"type": "user_joined", "user": {"id": user.id, "username": user.username}},
         exclude_user_id=user.id,
     )
+
+    # Notify all users that a new member was added to the chat
+    if is_new_member:
+        await collaboration_manager.broadcast(
+            code,
+            {
+                "type": "member_added",
+                "chat_id": session.chat_id,
+                "user": {"id": user.id, "username": user.username},
+            },
+        )
 
     try:
         while True:

@@ -139,6 +139,12 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         }
                         break;
 
+                    case 'member_added':
+                        if (callbacksRef.current.onMemberAdded && data.chat_id) {
+                            callbacksRef.current.onMemberAdded(data.chat_id);
+                        }
+                        break;
+
                     case 'new_message':
                         if (callbacksRef.current.onNewMessage) {
                             callbacksRef.current.onNewMessage(data.message);

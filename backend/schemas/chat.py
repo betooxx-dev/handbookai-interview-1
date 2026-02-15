@@ -29,6 +29,7 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     workflow_data: Optional[str] = None
+    chat_title: Optional[str] = None
     created_at: datetime
 
     class Config:
