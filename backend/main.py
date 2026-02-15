@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import init_db
-from routes import auth_router, chat_router, workflow_router
+from routes import auth_router, chat_router, workflow_router, collaboration_router
 
 app = FastAPI(title="Handbook Project API")
 
@@ -18,6 +18,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(workflow_router)
+app.include_router(collaboration_router)
 
 
 @app.on_event("startup")

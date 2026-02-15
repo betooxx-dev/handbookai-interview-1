@@ -8,9 +8,18 @@ import styles from './styles.module.css';
 interface ChatWindowProps {
     chatId: number | null;
     onWorkflowUpdate: (workflowData: string | null, messageId?: number) => void;
+    isCollaborating?: boolean;
+    onSendCollabMessage?: (content: string) => void;
+    remoteMessages?: Message[];
 }
 
-export default function ChatWindow({ chatId, onWorkflowUpdate }: ChatWindowProps) {
+export default function ChatWindow({
+    chatId,
+    onWorkflowUpdate,
+    isCollaborating = false,
+    onSendCollabMessage,
+    remoteMessages,
+}: ChatWindowProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -24,6 +33,18 @@ export default function ChatWindow({ chatId, onWorkflowUpdate }: ChatWindowProps
             onWorkflowUpdate(null);
         }
     }, [chatId]);
+
+    // Append remote messages from collaboration
+    useEffect(() => {
+        if (remoteMessages && remoteMessages.length > 0) {
+            setMessages((prev) => {
+                const existingIds = new Set(prev.map((m) => m.id));
+                const newMsgs = remoteMessages.filter((m) => !existingIds.has(m.id));
+                if (newMsgs.length === 0) return prev;
+                return [...prev, ...newMsgs];
+            });
+        }
+    }, [remoteMessages]);
 
     useEffect(() => {
         scrollToBottom();
@@ -40,10 +61,9 @@ export default function ChatWindow({ chatId, onWorkflowUpdate }: ChatWindowProps
             const chat = await ChatService.getChat(chatId);
             setMessages(chat.messages);
 
-            // Update workflow with latest assistant message that has workflow data
             const lastWorkflow = [...chat.messages]
                 .reverse()
-                .find(msg => msg.role === 'assistant' && msg.workflow_data);
+                .find((msg) => msg.role === 'assistant' && msg.workflow_data);
             onWorkflowUpdate(lastWorkflow?.workflow_data || null, lastWorkflow?.id);
         } catch (error) {
             console.error('Failed to load messages:', error);
@@ -55,33 +75,52 @@ export default function ChatWindow({ chatId, onWorkflowUpdate }: ChatWindowProps
 
         const userMessage = input;
         setInput('');
+
+        // If collaborating, send through WebSocket
+        if (isCollaborating && onSendCollabMessage) {
+            setLoading(true);
+            const tempUserMessage: Message = {
+                id: Date.now(),
+                chat_id: chatId,
+                role: 'user',
+                content: userMessage,
+                created_at: new Date().toISOString(),
+            };
+            setMessages((prev) => [...prev, tempUserMessage]);
+            onSendCollabMessage(userMessage);
+            // Loading will be turned off when AI response comes back via WS
+            return;
+        }
+
+        // Normal (non-collaborative) flow
         setLoading(true);
 
         const tempUserMessage: Message = {
-            id: Date.now(), // Temporary ID
+            id: Date.now(),
             chat_id: chatId,
             role: 'user',
             content: userMessage,
             created_at: new Date().toISOString(),
         };
-        setMessages(prev => [...prev, tempUserMessage]);
+        setMessages((prev) => [...prev, tempUserMessage]);
 
         try {
             const response = await ChatService.sendMessage(chatId, userMessage);
-            await loadMessages(); // This will reload with real data from server
+            await loadMessages();
 
-            // Update workflow if present
             if (response.workflow_data) {
                 onWorkflowUpdate(response.workflow_data, response.id);
             }
         } catch (error) {
             console.error('Failed to send message:', error);
-            // Remove the optimistic message on error
-            setMessages(prev => prev.filter(msg => msg.id !== tempUserMessage.id));
+            setMessages((prev) => prev.filter((msg) => msg.id !== tempUserMessage.id));
         } finally {
             setLoading(false);
         }
     };
+
+    // Allow parent to turn off loading (when AI response arrives via WS)
+    const stopLoading = () => setLoading(false);
 
     const handleKeyPress = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -96,9 +135,8 @@ export default function ChatWindow({ chatId, onWorkflowUpdate }: ChatWindowProps
         setLoading(true);
         try {
             const result = await ChatService.undoWorkflow(chatId);
-            await loadMessages(); // Reload messages after undo
+            await loadMessages();
 
-            // Update workflow to previous version or null
             if (result.workflow_data) {
                 onWorkflowUpdate(result.workflow_data);
             } else {

@@ -13,10 +13,10 @@ const storeApi: StateCreator<AuthState> = (set) => ({
     login: async (username: string, password: string) => {
         try {
             const data = await AuthService.login(username, password);
+            set(() => ({ token: data.access_token }));
             const user = await AuthService.getMe();
             set(() => ({
                 isAuthenticated: true,
-                token: data.access_token,
                 user,
                 errors: [],
             }));
@@ -32,6 +32,7 @@ const storeApi: StateCreator<AuthState> = (set) => ({
         try {
             await AuthService.register(username, email, password);
             const data = await AuthService.login(username, password);
+            set(() => ({ token: data.access_token }));
             const user = await AuthService.getMe();
             set(() => ({
                 isAuthenticated: true,

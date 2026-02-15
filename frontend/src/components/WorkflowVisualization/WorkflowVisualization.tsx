@@ -16,19 +16,36 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import styles from './styles.module.css';
 
+interface LockedNode {
+    userId: number;
+    username: string;
+}
+
 interface WorkflowVisualizationProps {
     workflowData: string | null;
     chatId: number | null;
     onPositionChange?: (workflowData: string) => void;
+    lockedNodes?: Record<string, LockedNode>;
+    onNodeDragStart?: (nodeId: string) => void;
+    onNodeDragStop?: (nodeId: string) => void;
+    isRemoteUpdate?: boolean;
 }
 
 export default function WorkflowVisualization({
     workflowData,
     chatId,
-    onPositionChange
+    onPositionChange,
+    lockedNodes = {},
+    onNodeDragStart,
+    onNodeDragStop,
+    isRemoteUpdate = false,
 }: WorkflowVisualizationProps) {
-    const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
     const lastSavedDataRef = useRef<string | null>(null);
+    const isRemoteRef = useRef(isRemoteUpdate);
+    isRemoteRef.current = isRemoteUpdate;
+    const prevNodeIdsRef = useRef<string>('');
+    const animationRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
     const parseWorkflow = useCallback((data: string | null) => {
         if (!data) {
             return { nodes: [], edges: [] };
@@ -66,9 +83,9 @@ export default function WorkflowVisualization({
             const positions = new Map<string, { x: number; y: number }>();
             const visited = new Set<string>();
             let currentY = 100;
-            const verticalSpacing = 180; // Increased spacing between nodes for better routing
-            const horizontalSpacing = 350; // Increased spacing for branches of decision nodes
-            const centerX = 400; // Center of the workflow
+            const verticalSpacing = 180;
+            const horizontalSpacing = 350;
+            const centerX = 400;
 
             const calculatePositions = (
                 nodeId: string,
@@ -84,22 +101,18 @@ export default function WorkflowVisualization({
                 const node = workflow.nodes.find((n: any) => n.id === nodeId);
                 if (!node) return;
 
-                // Calculate each node position
                 let nodeX = x;
                 let nodeY = y;
 
-                // Use saved position if available, otherwise calculate. This way, calculations can be reduced.
                 if (node.position) {
                     positions.set(nodeId, node.position);
                     nodeX = node.position.x;
                     nodeY = node.position.y;
                 } else {
                     if (isBranch && totalBranches > 1) {
-                        // Spread branches horizontally
                         const offset = (branchIndex - (totalBranches - 1) / 2) * horizontalSpacing;
                         nodeX = centerX + offset;
                     }
-
                     positions.set(nodeId, { x: nodeX, y: nodeY });
                 }
 
@@ -108,77 +121,63 @@ export default function WorkflowVisualization({
                 const nextY = y + verticalSpacing;
 
                 if (isDecision && children.length > 1) {
-                    // Decision node with multiple children, so they are laid out horizontally
                     children.forEach((childId, index) => {
-                        calculatePositions(
-                            childId,
-                            centerX,
-                            nextY,
-                            true,
-                            index,
-                            children.length
-                        );
+                        calculatePositions(childId, centerX, nextY, true, index, children.length);
                     });
                 } else if (children.length === 1) {
-                    // If it only has a single child, check if it's a merge point for the decision branches
                     const childId = children[0];
                     const isMerge = mergeNodes.has(childId);
-
                     if (isMerge) {
-                        // This is where branches merge, so we go back to center position
                         calculatePositions(childId, centerX, nextY, false, 0, 1);
                     } else {
-                        // Continue in same branch, since it is not a merge point
                         calculatePositions(childId, nodeX, nextY, isBranch, branchIndex, totalBranches);
                     }
                 } else if (children.length > 1 && !isDecision) {
-                    // Regular node with multiple children, in case the API returns a regular node with more than one branch as a failsafe
                     children.forEach((childId, index) => {
-                        calculatePositions(
-                            childId,
-                            centerX,
-                            nextY,
-                            true,
-                            index,
-                            children.length
-                        );
+                        calculatePositions(childId, centerX, nextY, true, index, children.length);
                     });
                 }
             };
 
-            // Find the starting node
             const startNode = workflow.nodes.find((n: any) => n.type === 'start');
             if (startNode) {
                 calculatePositions(startNode.id, centerX, currentY);
             } else if (workflow.nodes.length > 0) {
-                // If no start node, then use first node
                 calculatePositions(workflow.nodes[0].id, centerX, currentY);
             }
 
-            // Filter out disconnected/orphaned nodes (nodes not visited from start)
             const connectedNodes = workflow.nodes.filter((node: any) => visited.has(node.id));
 
             const nodes: Node[] = connectedNodes.map((node: any) => {
                 const position = positions.get(node.id) || { x: centerX, y: 100 };
+                const isLocked = lockedNodes[node.id] !== undefined;
 
                 return {
                     id: node.id,
                     type: 'default',
-                    data: { label: node.label },
+                    data: {
+                        label: isLocked
+                            ? `🔒 ${node.label} (${lockedNodes[node.id].username})`
+                            : node.label,
+                    },
                     position,
+                    draggable: !isLocked,
                     style: {
-                        background: node.type === 'start' ? '#FC005C' :
-                            node.type === 'end' ? '#667eea' :
-                                node.type === 'decision' ? '#f6ad55' :
-                                    '#48bb78',
+                        background: isLocked
+                            ? '#6b7280'
+                            : node.type === 'start' ? '#FC005C'
+                                : node.type === 'end' ? '#667eea'
+                                    : node.type === 'decision' ? '#f6ad55'
+                                        : '#48bb78',
                         color: 'white',
                         padding: '10px 20px',
                         borderRadius: node.type === 'decision' ? '8px' : '50px',
                         fontSize: '14px',
                         fontWeight: '500',
-                        border: 'none',
+                        border: isLocked ? '2px solid #ef4444' : 'none',
                         minWidth: '150px',
                         textAlign: 'center',
+                        opacity: isLocked ? 0.7 : 1,
                     },
                 };
             });
@@ -190,18 +189,14 @@ export default function WorkflowVisualization({
                 animated: true,
                 style: { stroke: '#667eea', strokeWidth: 2 },
                 type: 'smoothstep',
-                pathOptions: {
-                    offset: 35,
-                    borderRadius: 25,
-                },
+                pathOptions: { offset: 35, borderRadius: 25 },
                 markerEnd: {
                     type: MarkerType.ArrowClosed,
                     width: 20,
                     height: 20,
                     color: '#667eea',
                 },
-                // Use bottom/top handles for vertical flows
-                sourceHandle: undefined,  // Auto-select best handle
+                sourceHandle: undefined,
             }));
 
             return { nodes, edges };
@@ -209,7 +204,7 @@ export default function WorkflowVisualization({
             console.error('Failed to parse workflow:', error);
             return { nodes: [], edges: [] };
         }
-    }, []);
+    }, [lockedNodes]);
 
     const { nodes: initialNodes, edges: initialEdges } = useMemo(
         () => parseWorkflow(workflowData),
@@ -219,81 +214,209 @@ export default function WorkflowVisualization({
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-    // Update nodes and edges when workflow data changes
-    useEffect(() => {
-        const { nodes: newNodes, edges: newEdges } = parseWorkflow(workflowData);
-        setNodes(newNodes);
-        setEdges(newEdges);
-    }, [workflowData, parseWorkflow, setNodes, setEdges]);
+    // Build a fingerprint from the RAW workflow JSON (id + label + type),
+    // ignoring positions and lock decorations, so only AI-driven content
+    // changes trigger the progressive reveal animation.
+    const getRawFingerprint = useCallback((data: string | null): string => {
+        if (!data) return '';
+        try {
+            const raw = JSON.parse(data);
+            return (raw.nodes || [])
+                .map((n: any) => `${n.id}:${n.label}:${n.type}`)
+                .sort()
+                .join('|');
+        } catch {
+            return '';
+        }
+    }, []);
 
-    // Cleanup debounce timer when unmounted
+    useEffect(() => {
+        // Cancel any ongoing animation
+        if (animationRef.current) {
+            clearInterval(animationRef.current);
+            animationRef.current = null;
+        }
+
+        const { nodes: newNodes, edges: newEdges } = parseWorkflow(workflowData);
+
+        // Fingerprint based on raw data: only changes when the AI modifies
+        // node content (id, label, type), NOT on position or lock changes
+        const rawFingerprint = getRawFingerprint(workflowData);
+        const isStructuralChange = rawFingerprint !== prevNodeIdsRef.current
+            && rawFingerprint !== '';
+        prevNodeIdsRef.current = rawFingerprint;
+
+        let startTimer: ReturnType<typeof setTimeout> | null = null;
+
+        if (isStructuralChange && newNodes.length > 1) {
+            // Progressive reveal: place all nodes hidden for proper viewport calc,
+            // then fade them in one by one
+            const hiddenNodes = newNodes.map(n => ({
+                ...n,
+                style: { ...n.style, opacity: 0, transition: 'opacity 0.3s ease-out' },
+            }));
+            setNodes(hiddenNodes);
+            setEdges([]);
+
+            let visibleCount = 0;
+
+            const revealNext = () => {
+                visibleCount++;
+
+                const updatedNodes = newNodes.map((n, idx) => ({
+                    ...n,
+                    style: {
+                        ...n.style,
+                        opacity: idx < visibleCount
+                            ? (typeof n.style?.opacity === 'number' ? n.style.opacity : 1)
+                            : 0,
+                        transition: 'opacity 0.3s ease-out',
+                    },
+                }));
+
+                // Show edges only when both source and target nodes are visible
+                const visibleNodeIds = new Set(
+                    newNodes.slice(0, visibleCount).map(n => n.id)
+                );
+                const visibleEdges = newEdges.filter(
+                    e => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target)
+                );
+
+                setNodes(updatedNodes);
+                setEdges(visibleEdges);
+
+                if (visibleCount >= newNodes.length) {
+                    if (animationRef.current) {
+                        clearInterval(animationRef.current);
+                        animationRef.current = null;
+                    }
+                }
+            };
+
+            // Small delay so ReactFlow can position the viewport with all hidden nodes
+            startTimer = setTimeout(() => {
+                revealNext();
+                if (newNodes.length > 1) {
+                    animationRef.current = setInterval(revealNext, 150);
+                }
+            }, 100);
+        } else {
+            // Non-structural change (position, lock/unlock): update only
+            // nodes that actually changed to avoid unnecessary re-renders
+            setNodes(currentNodes => {
+                if (currentNodes.length !== newNodes.length) return newNodes;
+                return currentNodes.map(current => {
+                    const updated = newNodes.find(n => n.id === current.id);
+                    if (!updated) return current;
+                    const posChanged = current.position.x !== updated.position.x
+                        || current.position.y !== updated.position.y;
+                    const labelChanged = current.data?.label !== updated.data?.label;
+                    const styleChanged = current.style?.opacity !== updated.style?.opacity
+                        || current.style?.background !== updated.style?.background
+                        || current.style?.border !== updated.style?.border;
+                    const draggableChanged = current.draggable !== updated.draggable;
+                    if (!posChanged && !labelChanged && !styleChanged && !draggableChanged) {
+                        return current; // Same reference → React skips re-render
+                    }
+                    return updated;
+                });
+            });
+            setEdges(newEdges);
+        }
+
+        return () => {
+            if (startTimer) clearTimeout(startTimer);
+            if (animationRef.current) {
+                clearInterval(animationRef.current);
+                animationRef.current = null;
+            }
+        };
+    }, [workflowData, parseWorkflow, setNodes, setEdges, getRawFingerprint]);
+
     useEffect(() => {
         return () => {
-            if (saveTimerRef.current) {
-                clearTimeout(saveTimerRef.current);
+            if (animationRef.current) {
+                clearInterval(animationRef.current);
             }
         };
     }, []);
 
-    // Debounced save function (implemented after discussion)
-    const debouncedSave = useCallback((updatedWorkflow: string) => {
-        // Clear existing timer
-        if (saveTimerRef.current) {
-            clearTimeout(saveTimerRef.current);
-        }
-
-        // Set new timer, waiting 500 ms after last change
-        saveTimerRef.current = setTimeout(() => {
-            // Only save if data actually changed
-            if (updatedWorkflow !== lastSavedDataRef.current && onPositionChange) {
-                console.log('Saving workflow positions...');
-                onPositionChange(updatedWorkflow);
-                lastSavedDataRef.current = updatedWorkflow;
-            }
-        }, 500); // Value in miliseconds for debounce delay
-    }, [onPositionChange]);
-
-    // Handle node changes with debounced save
     const handleNodesChange = useCallback((changes: NodeChange[]) => {
         onNodesChange(changes);
 
-        // Check if any node was dragged
-        const hasDragStop = changes.some(change =>
-            change.type === 'position' && change.dragging === false
+        // Fire lock on drag start
+        const dragStart = changes.find(
+            (c) => c.type === 'position' && c.dragging === true
+        );
+        if (dragStart && 'id' in dragStart && onNodeDragStart) {
+            onNodeDragStart(dragStart.id);
+        }
+
+        const hasDragStop = changes.some(
+            (change) => change.type === 'position' && change.dragging === false
         );
 
-        if (hasDragStop && workflowData) {
-            // Get current node positions after the change
-            setTimeout(() => {
-                setNodes((currentNodes) => {
-                    try {
-                        const workflow = JSON.parse(workflowData);
+        if (hasDragStop) {
+            const dragStopChange = changes.find(
+                (c) => c.type === 'position' && c.dragging === false
+            );
+            const dragStopNodeId = dragStopChange && 'id' in dragStopChange
+                ? dragStopChange.id
+                : null;
 
-                        // Update positions in workflow data
-                        const updatedNodes = workflow.nodes.map((node: any) => {
-                            const reactFlowNode = currentNodes.find((n: Node) => n.id === node.id);
-                            return {
-                                ...node,
-                                position: reactFlowNode?.position || node.position
-                            };
-                        });
+            // Don't save if this is a remote update
+            if (isRemoteRef.current) {
+                if (dragStopNodeId && onNodeDragStop) {
+                    onNodeDragStop(dragStopNodeId);
+                }
+                return;
+            }
 
-                        const updatedWorkflow = {
-                            ...workflow,
-                            nodes: updatedNodes
-                        };
+            if (workflowData) {
+                // Use setTimeout(0) to read the latest node positions after React commits
+                setTimeout(() => {
+                    setNodes((currentNodes) => {
+                        try {
+                            const workflow = JSON.parse(workflowData);
+                            const updatedNodes = workflow.nodes.map((node: any) => {
+                                const reactFlowNode = currentNodes.find((n: Node) => n.id === node.id);
+                                return {
+                                    ...node,
+                                    position: reactFlowNode?.position || node.position,
+                                };
+                            });
 
-                        // Use debounced save instead of immediate save
-                        debouncedSave(JSON.stringify(updatedWorkflow));
-                    } catch (error) {
-                        console.error('Failed to save positions:', error);
-                    }
+                            const updatedWorkflow = { ...workflow, nodes: updatedNodes };
+                            const workflowStr = JSON.stringify(updatedWorkflow);
 
-                    return currentNodes;
-                });
-            }, 0);
+                            // 1. Send position update FIRST
+                            if (workflowStr !== lastSavedDataRef.current && onPositionChange) {
+                                onPositionChange(workflowStr);
+                                lastSavedDataRef.current = workflowStr;
+                            }
+
+                            // 2. THEN unlock the node (after position is broadcast)
+                            if (dragStopNodeId && onNodeDragStop) {
+                                onNodeDragStop(dragStopNodeId);
+                            }
+                        } catch (error) {
+                            console.error('Failed to save positions:', error);
+                            // Still unlock on error
+                            if (dragStopNodeId && onNodeDragStop) {
+                                onNodeDragStop(dragStopNodeId);
+                            }
+                        }
+                        return currentNodes;
+                    });
+                }, 0);
+            } else {
+                // No workflow data, just unlock
+                if (dragStopNodeId && onNodeDragStop) {
+                    onNodeDragStop(dragStopNodeId);
+                }
+            }
         }
-    }, [onNodesChange, workflowData, setNodes, debouncedSave]);
+    }, [onNodesChange, workflowData, setNodes, onPositionChange, onNodeDragStart, onNodeDragStop]);
 
     if (!workflowData) {
         return (
@@ -347,9 +470,7 @@ export default function WorkflowVisualization({
                 >
                     <Controls />
                     <MiniMap
-                        style={{
-                            background: '#f5f5f5',
-                        }}
+                        style={{ background: '#f5f5f5' }}
                         nodeColor={(node) => {
                             const bgColor = node.style?.background as string;
                             return bgColor || '#667eea';

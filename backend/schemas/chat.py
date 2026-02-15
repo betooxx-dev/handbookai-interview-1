@@ -24,6 +24,7 @@ class MessageCreate(BaseModel):
 class MessageResponse(BaseModel):
     id: int
     chat_id: int
+    user_id: Optional[int] = None
     role: str
     content: str
     workflow_data: Optional[str] = None

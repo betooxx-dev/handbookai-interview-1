@@ -10,9 +10,12 @@ class Message(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     chat_id = Column(Integer, ForeignKey("chats.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     role = Column(String(50), nullable=False)
     content = Column(Text, nullable=False)
     workflow_data = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     chat = relationship("Chat", back_populates="messages")
+    user = relationship("User")
+

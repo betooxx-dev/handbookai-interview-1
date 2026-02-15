@@ -15,6 +15,7 @@ export interface Chat {
 export interface Message {
     id: number;
     chat_id: number;
+    user_id?: number;
     role: 'user' | 'assistant';
     content: string;
     workflow_data?: string;

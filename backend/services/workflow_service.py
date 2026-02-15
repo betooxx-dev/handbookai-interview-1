@@ -79,7 +79,7 @@ class WorkflowService:
         chat = ChatService.get_chat(chat_id, user_id, db)
 
         # Save user message
-        user_message = Message(chat_id=chat_id, role="user", content=content)
+        user_message = Message(chat_id=chat_id, role="user", content=content, user_id=user_id)
         db.add(user_message)
         db.commit()
         db.refresh(user_message)
@@ -211,9 +211,9 @@ class WorkflowService:
         }
 
         response = client.chat.completions.create(
-            model="gpt-5-nano",
+            model="gpt-4o-mini",
             messages=[system_message] + conversation,
-            max_completion_tokens=5000,
+            max_tokens=5000,
         )
 
         ai_content = response.choices[0].message.content
