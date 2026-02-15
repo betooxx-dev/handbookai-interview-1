@@ -30,7 +30,6 @@ export default function Home() {
     onRemoteWorkflowUpdate: (data, fromUser) => {
       setIsRemoteUpdate(true);
       setWorkflowData(data);
-      // Reset remote flag after React processes the update
       setTimeout(() => setIsRemoteUpdate(false), 100);
     },
     onNewMessage: (message) => {
@@ -52,7 +51,6 @@ export default function Home() {
         workflow_data: message.workflow_data,
         created_at: new Date().toISOString(),
       }]);
-      // Update workflow if AI generated one
       if (message.workflow_data) {
         setIsRemoteUpdate(true);
         setWorkflowData(message.workflow_data);
@@ -61,37 +59,39 @@ export default function Home() {
     },
   });
 
-  // Update handlePositionChange to use latest collaboration state
-  const handlePositionChangeWithCollab = useCallback(async (updatedWorkflow: string) => {
-    // Broadcast to collaborators immediately (don't wait for API)
-    if (collaboration.isConnected) {
-      collaboration.sendWorkflowUpdate(updatedWorkflow);
-    }
-    // Then persist to API (async, non-blocking for collaboration)
-    if (currentMessageId) {
-      try {
-        await ChatService.updateWorkflowPositions(currentMessageId, updatedWorkflow);
-      } catch (error) {
-        console.error('Failed to save positions:', error);
+  const handlePositionChangeWithCollab = useCallback(
+    async (updatedWorkflow: string) => {
+      if (collaboration.isConnected)
+        collaboration.sendWorkflowUpdate(updatedWorkflow);
+
+      if (currentMessageId) {
+        try {
+          await ChatService.updateWorkflowPositions(
+            currentMessageId,
+            updatedWorkflow,
+          );
+        } catch (error) {
+          console.error("Failed to save positions:", error);
+        }
       }
-    }
-  }, [currentMessageId, collaboration.isConnected, collaboration.sendWorkflowUpdate]);
+    },
+    [
+      currentMessageId,
+      collaboration.isConnected,
+      collaboration.sendWorkflowUpdate,
+    ],
+  );
 
   useEffect(() => {
     setHasMounted(true);
     checkAuth();
   }, [checkAuth]);
 
-  // Clear remote messages when changing chats
   useEffect(() => {
     setRemoteMessages([]);
   }, [selectedChatId]);
 
-  // Prevent hydration mismatch: don't render auth-dependent UI until client has mounted
-  // and Zustand has rehydrated from localStorage
-  if (!hasMounted) {
-    return null;
-  }
+  if (!hasMounted) return null;
 
   if (!isAuthenticated) return <AuthForm />;
 

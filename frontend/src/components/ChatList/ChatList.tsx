@@ -48,10 +48,8 @@ export default function ChatList({ onSelectChat, selectedChatId }: ChatListProps
             const updatedChats = chats.filter(chat => chat.id !== chatId);
             setChats(updatedChats);
 
-            // If deleting the currently selected chat, deselect it
-            if (selectedChatId === chatId) {
-                onSelectChat(null);
-            }
+            if (selectedChatId === chatId) onSelectChat(null);
+            
         } catch (error) {
             console.error('Failed to delete chat:', error);
         }

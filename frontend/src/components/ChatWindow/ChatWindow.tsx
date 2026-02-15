@@ -34,7 +34,6 @@ export default function ChatWindow({
         }
     }, [chatId]);
 
-    // Append remote messages from collaboration
     useEffect(() => {
         if (remoteMessages && remoteMessages.length > 0) {
             setMessages((prev) => {
@@ -76,7 +75,6 @@ export default function ChatWindow({
         const userMessage = input;
         setInput('');
 
-        // If collaborating, send through WebSocket
         if (isCollaborating && onSendCollabMessage) {
             setLoading(true);
             const tempUserMessage: Message = {
@@ -88,11 +86,9 @@ export default function ChatWindow({
             };
             setMessages((prev) => [...prev, tempUserMessage]);
             onSendCollabMessage(userMessage);
-            // Loading will be turned off when AI response comes back via WS
             return;
         }
 
-        // Normal (non-collaborative) flow
         setLoading(true);
 
         const tempUserMessage: Message = {
@@ -118,9 +114,6 @@ export default function ChatWindow({
             setLoading(false);
         }
     };
-
-    // Allow parent to turn off loading (when AI response arrives via WS)
-    const stopLoading = () => setLoading(false);
 
     const handleKeyPress = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {

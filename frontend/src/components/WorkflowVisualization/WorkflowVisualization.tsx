@@ -15,21 +15,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import styles from './styles.module.css';
-
-interface LockedNode {
-    userId: number;
-    username: string;
-}
-
-interface WorkflowVisualizationProps {
-    workflowData: string | null;
-    chatId: number | null;
-    onPositionChange?: (workflowData: string) => void;
-    lockedNodes?: Record<string, LockedNode>;
-    onNodeDragStart?: (nodeId: string) => void;
-    onNodeDragStop?: (nodeId: string) => void;
-    isRemoteUpdate?: boolean;
-}
+import { WorkflowVisualizationProps } from "@/types";
 
 export default function WorkflowVisualization({
     workflowData,
@@ -54,7 +40,6 @@ export default function WorkflowVisualization({
         try {
             const workflow = JSON.parse(data);
 
-            // Build adjacency map for the graph that will be displayed.
             const adjacencyMap = new Map<string, string[]>();
             workflow.edges.forEach((edge: any) => {
                 if (!adjacencyMap.has(edge.from)) {
@@ -63,7 +48,6 @@ export default function WorkflowVisualization({
                 adjacencyMap.get(edge.from)!.push(edge.to);
             });
 
-            // Find nodes where branches merge from decision nodes merge.
             const incomingEdges = new Map<string, string[]>();
             workflow.edges.forEach((edge: any) => {
                 if (!incomingEdges.has(edge.to)) {
@@ -79,7 +63,6 @@ export default function WorkflowVisualization({
                 }
             });
 
-            // Calculate positions with the branching logic
             const positions = new Map<string, { x: number; y: number }>();
             const visited = new Set<string>();
             let currentY = 100;
@@ -214,9 +197,6 @@ export default function WorkflowVisualization({
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-    // Build a fingerprint from the RAW workflow JSON (id + label + type),
-    // ignoring positions and lock decorations, so only AI-driven content
-    // changes trigger the progressive reveal animation.
     const getRawFingerprint = useCallback((data: string | null): string => {
         if (!data) return '';
         try {
@@ -231,106 +211,111 @@ export default function WorkflowVisualization({
     }, []);
 
     useEffect(() => {
-        // Cancel any ongoing animation
-        if (animationRef.current) {
-            clearInterval(animationRef.current);
-            animationRef.current = null;
-        }
+      if (animationRef.current) {
+        clearInterval(animationRef.current);
+        animationRef.current = null;
+      }
 
-        const { nodes: newNodes, edges: newEdges } = parseWorkflow(workflowData);
+      const { nodes: newNodes, edges: newEdges } = parseWorkflow(workflowData);
 
-        // Fingerprint based on raw data: only changes when the AI modifies
-        // node content (id, label, type), NOT on position or lock changes
-        const rawFingerprint = getRawFingerprint(workflowData);
-        const isStructuralChange = rawFingerprint !== prevNodeIdsRef.current
-            && rawFingerprint !== '';
-        prevNodeIdsRef.current = rawFingerprint;
+      const rawFingerprint = getRawFingerprint(workflowData);
+      const isStructuralChange =
+        rawFingerprint !== prevNodeIdsRef.current && rawFingerprint !== "";
+      prevNodeIdsRef.current = rawFingerprint;
 
-        let startTimer: ReturnType<typeof setTimeout> | null = null;
+      let startTimer: ReturnType<typeof setTimeout> | null = null;
 
-        if (isStructuralChange && newNodes.length > 1) {
-            // Progressive reveal: place all nodes hidden for proper viewport calc,
-            // then fade them in one by one
-            const hiddenNodes = newNodes.map(n => ({
-                ...n,
-                style: { ...n.style, opacity: 0, transition: 'opacity 0.3s ease-out' },
-            }));
-            setNodes(hiddenNodes);
-            setEdges([]);
+      if (isStructuralChange && newNodes.length > 1) {
+        const hiddenNodes = newNodes.map((n) => ({
+          ...n,
+          style: {
+            ...n.style,
+            opacity: 0,
+            transition: "opacity 0.3s ease-out",
+          },
+        }));
+        setNodes(hiddenNodes);
+        setEdges([]);
 
-            let visibleCount = 0;
+        let visibleCount = 0;
 
-            const revealNext = () => {
-                visibleCount++;
+        const revealNext = () => {
+          visibleCount++;
 
-                const updatedNodes = newNodes.map((n, idx) => ({
-                    ...n,
-                    style: {
-                        ...n.style,
-                        opacity: idx < visibleCount
-                            ? (typeof n.style?.opacity === 'number' ? n.style.opacity : 1)
-                            : 0,
-                        transition: 'opacity 0.3s ease-out',
-                    },
-                }));
+          const updatedNodes = newNodes.map((n, idx) => ({
+            ...n,
+            style: {
+              ...n.style,
+              opacity:
+                idx < visibleCount
+                  ? typeof n.style?.opacity === "number"
+                    ? n.style.opacity
+                    : 1
+                  : 0,
+              transition: "opacity 0.3s ease-out",
+            },
+          }));
 
-                // Show edges only when both source and target nodes are visible
-                const visibleNodeIds = new Set(
-                    newNodes.slice(0, visibleCount).map(n => n.id)
-                );
-                const visibleEdges = newEdges.filter(
-                    e => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target)
-                );
+          const visibleNodeIds = new Set(
+            newNodes.slice(0, visibleCount).map((n) => n.id),
+          );
+          const visibleEdges = newEdges.filter(
+            (e) => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target),
+          );
 
-                setNodes(updatedNodes);
-                setEdges(visibleEdges);
+          setNodes(updatedNodes);
+          setEdges(visibleEdges);
 
-                if (visibleCount >= newNodes.length) {
-                    if (animationRef.current) {
-                        clearInterval(animationRef.current);
-                        animationRef.current = null;
-                    }
-                }
-            };
-
-            // Small delay so ReactFlow can position the viewport with all hidden nodes
-            startTimer = setTimeout(() => {
-                revealNext();
-                if (newNodes.length > 1) {
-                    animationRef.current = setInterval(revealNext, 150);
-                }
-            }, 100);
-        } else {
-            // Non-structural change (position, lock/unlock): update only
-            // nodes that actually changed to avoid unnecessary re-renders
-            setNodes(currentNodes => {
-                if (currentNodes.length !== newNodes.length) return newNodes;
-                return currentNodes.map(current => {
-                    const updated = newNodes.find(n => n.id === current.id);
-                    if (!updated) return current;
-                    const posChanged = current.position.x !== updated.position.x
-                        || current.position.y !== updated.position.y;
-                    const labelChanged = current.data?.label !== updated.data?.label;
-                    const styleChanged = current.style?.opacity !== updated.style?.opacity
-                        || current.style?.background !== updated.style?.background
-                        || current.style?.border !== updated.style?.border;
-                    const draggableChanged = current.draggable !== updated.draggable;
-                    if (!posChanged && !labelChanged && !styleChanged && !draggableChanged) {
-                        return current; // Same reference → React skips re-render
-                    }
-                    return updated;
-                });
-            });
-            setEdges(newEdges);
-        }
-
-        return () => {
-            if (startTimer) clearTimeout(startTimer);
+          if (visibleCount >= newNodes.length) {
             if (animationRef.current) {
-                clearInterval(animationRef.current);
-                animationRef.current = null;
+              clearInterval(animationRef.current);
+              animationRef.current = null;
             }
+          }
         };
+
+        startTimer = setTimeout(() => {
+          revealNext();
+          if (newNodes.length > 1) {
+            animationRef.current = setInterval(revealNext, 150);
+          }
+        }, 100);
+      } else {
+        setNodes((currentNodes) => {
+          if (currentNodes.length !== newNodes.length) return newNodes;
+          return currentNodes.map((current) => {
+            const updated = newNodes.find((n) => n.id === current.id);
+            if (!updated) return current;
+            const posChanged =
+              current.position.x !== updated.position.x ||
+              current.position.y !== updated.position.y;
+            const labelChanged = current.data?.label !== updated.data?.label;
+            const styleChanged =
+              current.style?.opacity !== updated.style?.opacity ||
+              current.style?.background !== updated.style?.background ||
+              current.style?.border !== updated.style?.border;
+            const draggableChanged = current.draggable !== updated.draggable;
+            if (
+              !posChanged &&
+              !labelChanged &&
+              !styleChanged &&
+              !draggableChanged
+            ) {
+              return current; // Same reference → React skips re-render
+            }
+            return updated;
+          });
+        });
+        setEdges(newEdges);
+      }
+
+      return () => {
+        if (startTimer) clearTimeout(startTimer);
+        if (animationRef.current) {
+          clearInterval(animationRef.current);
+          animationRef.current = null;
+        }
+      };
     }, [workflowData, parseWorkflow, setNodes, setEdges, getRawFingerprint]);
 
     useEffect(() => {
@@ -344,77 +329,70 @@ export default function WorkflowVisualization({
     const handleNodesChange = useCallback((changes: NodeChange[]) => {
         onNodesChange(changes);
 
-        // Fire lock on drag start
         const dragStart = changes.find(
             (c) => c.type === 'position' && c.dragging === true
         );
-        if (dragStart && 'id' in dragStart && onNodeDragStart) {
-            onNodeDragStart(dragStart.id);
-        }
-
+        if (dragStart && "id" in dragStart && onNodeDragStart)
+          onNodeDragStart(dragStart.id);
+        
         const hasDragStop = changes.some(
-            (change) => change.type === 'position' && change.dragging === false
+          (change) => change.type === "position" && change.dragging === false,
         );
 
         if (hasDragStop) {
-            const dragStopChange = changes.find(
-                (c) => c.type === 'position' && c.dragging === false
-            );
-            const dragStopNodeId = dragStopChange && 'id' in dragStopChange
-                ? dragStopChange.id
-                : null;
+          const dragStopChange = changes.find(
+            (c) => c.type === "position" && c.dragging === false,
+          );
+          const dragStopNodeId =
+            dragStopChange && "id" in dragStopChange ? dragStopChange.id : null;
 
-            // Don't save if this is a remote update
-            if (isRemoteRef.current) {
-                if (dragStopNodeId && onNodeDragStop) {
+          if (isRemoteRef.current) {
+            if (dragStopNodeId && onNodeDragStop)
+              onNodeDragStop(dragStopNodeId);
+
+            return;
+          }
+
+          if (workflowData) {
+            setTimeout(() => {
+              setNodes((currentNodes) => {
+                try {
+                  const workflow = JSON.parse(workflowData);
+                  const updatedNodes = workflow.nodes.map((node: any) => {
+                    const reactFlowNode = currentNodes.find(
+                      (n: Node) => n.id === node.id,
+                    );
+                    return {
+                      ...node,
+                      position: reactFlowNode?.position || node.position,
+                    };
+                  });
+
+                  const updatedWorkflow = { ...workflow, nodes: updatedNodes };
+                  const workflowStr = JSON.stringify(updatedWorkflow);
+
+                  if (
+                    workflowStr !== lastSavedDataRef.current &&
+                    onPositionChange
+                  ) {
+                    onPositionChange(workflowStr);
+                    lastSavedDataRef.current = workflowStr;
+                  }
+
+                  if (dragStopNodeId && onNodeDragStop)
+                    onNodeDragStop(dragStopNodeId);
+                } catch (error) {
+                  console.error("Failed to save positions:", error);
+                  if (dragStopNodeId && onNodeDragStop)
                     onNodeDragStop(dragStopNodeId);
                 }
-                return;
-            }
-
-            if (workflowData) {
-                // Use setTimeout(0) to read the latest node positions after React commits
-                setTimeout(() => {
-                    setNodes((currentNodes) => {
-                        try {
-                            const workflow = JSON.parse(workflowData);
-                            const updatedNodes = workflow.nodes.map((node: any) => {
-                                const reactFlowNode = currentNodes.find((n: Node) => n.id === node.id);
-                                return {
-                                    ...node,
-                                    position: reactFlowNode?.position || node.position,
-                                };
-                            });
-
-                            const updatedWorkflow = { ...workflow, nodes: updatedNodes };
-                            const workflowStr = JSON.stringify(updatedWorkflow);
-
-                            // 1. Send position update FIRST
-                            if (workflowStr !== lastSavedDataRef.current && onPositionChange) {
-                                onPositionChange(workflowStr);
-                                lastSavedDataRef.current = workflowStr;
-                            }
-
-                            // 2. THEN unlock the node (after position is broadcast)
-                            if (dragStopNodeId && onNodeDragStop) {
-                                onNodeDragStop(dragStopNodeId);
-                            }
-                        } catch (error) {
-                            console.error('Failed to save positions:', error);
-                            // Still unlock on error
-                            if (dragStopNodeId && onNodeDragStop) {
-                                onNodeDragStop(dragStopNodeId);
-                            }
-                        }
-                        return currentNodes;
-                    });
-                }, 0);
-            } else {
-                // No workflow data, just unlock
-                if (dragStopNodeId && onNodeDragStop) {
-                    onNodeDragStop(dragStopNodeId);
-                }
-            }
+                return currentNodes;
+              });
+            }, 0);
+          } else {
+            if (dragStopNodeId && onNodeDragStop)
+              onNodeDragStop(dragStopNodeId);
+          }
         }
     }, [onNodesChange, workflowData, setNodes, onPositionChange, onNodeDragStart, onNodeDragStop]);
 

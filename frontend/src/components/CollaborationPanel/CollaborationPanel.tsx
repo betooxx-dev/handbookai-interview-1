@@ -2,21 +2,7 @@
 
 import { useState } from 'react';
 import styles from './styles.module.css';
-
-interface CollabUser {
-    id: number;
-    username: string;
-}
-
-interface CollaborationPanelProps {
-    chatId: number | null;
-    sessionCode: string | null;
-    users: CollabUser[];
-    isConnected: boolean;
-    onCreateSession: (chatId: number) => Promise<void>;
-    onJoinSession: (code: string) => Promise<void>;
-    onLeaveSession: () => void;
-}
+import { CollaborationPanelProps } from "@/types";
 
 export default function CollaborationPanel({
     chatId,
@@ -57,19 +43,14 @@ export default function CollaborationPanel({
     };
 
     const handleCopyCode = async () => {
-        if (!sessionCode) return;
-        try {
-            await navigator.clipboard.writeText(sessionCode);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-        } catch {
-            // Fallback
-        }
+      if (!sessionCode) return;
+      await navigator.clipboard.writeText(sessionCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     };
 
     if (!chatId) return null;
 
-    // Connected state
     if (isConnected && sessionCode) {
         return (
             <div className={styles.panel}>
@@ -96,7 +77,6 @@ export default function CollaborationPanel({
         );
     }
 
-    // Disconnected state
     return (
         <div className={styles.panel}>
             <button

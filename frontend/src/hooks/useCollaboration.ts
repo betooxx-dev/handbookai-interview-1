@@ -3,36 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAuthStore } from '@/store/auth.store';
 import { CollaborationService } from '@/services/collaboration.service';
-
-interface CollabUser {
-    id: number;
-    username: string;
-}
-
-interface LockedNode {
-    userId: number;
-    username: string;
-}
-
-interface UseCollaborationReturn {
-    sessionCode: string | null;
-    users: CollabUser[];
-    lockedNodes: Record<string, LockedNode>;
-    isConnected: boolean;
-    createSession: (chatId: number) => Promise<void>;
-    joinSession: (code: string) => Promise<void>;
-    leaveSession: () => void;
-    sendWorkflowUpdate: (workflowData: string) => void;
-    lockNode: (nodeId: string) => void;
-    unlockNode: (nodeId: string) => void;
-    sendChatMessage: (content: string) => void;
-}
-
-interface CollaborationCallbacks {
-    onRemoteWorkflowUpdate?: (workflowData: string, fromUser: CollabUser) => void;
-    onNewMessage?: (message: any) => void;
-    onAiResponse?: (message: any) => void;
-}
+import { CollaborationCallbacks, UseCollaborationReturn, CollabUser, LockedNode } from '@/types';
 
 export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCollaborationReturn {
     const [sessionCode, setSessionCode] = useState<string | null>(null);
