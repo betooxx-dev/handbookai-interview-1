@@ -13,6 +13,26 @@ export class CollaborationService {
         }
     };
 
+    static getSessionForChat = async (chatId: number) => {
+        try {
+            const { data } = await api.get(`/chats/${chatId}/collaboration`);
+            return data as { code: string | null; chat_id: number };
+        } catch (error) {
+            console.log(error);
+            throw new Error('An error occurred while getting collaboration session');
+        }
+    };
+
+    static removeMember = async (chatId: number, userId: number) => {
+        try {
+            const { data } = await api.delete(`/chats/${chatId}/members/${userId}`);
+            return data;
+        } catch (error) {
+            console.log(error);
+            throw new Error('An error occurred while removing member');
+        }
+    };
+
     static getWsUrl = (code: string, token: string) => {
         return `${WS_BASE}/ws/collaborate/${code}?token=${token}`;
     };

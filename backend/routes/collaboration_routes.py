@@ -1,12 +1,12 @@
 import json
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query, HTTPException
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 
 from config import settings
 from database import get_db
-from models import User
+from models import User, ChatMember
 from services import AuthService
 from services.collaboration_manager import collaboration_manager
 from services.workflow_service import WorkflowService
@@ -21,11 +21,33 @@ def create_collaboration_session(
     db: Session = Depends(get_db),
 ):
     """Create a collaboration session for a chat. Returns the join code."""
-    # Verify user owns the chat
+    # Verify user is a member of the chat
     from services.chat_service import ChatService
     ChatService.get_chat(chat_id, current_user.id, db)
 
     code = collaboration_manager.create_session(chat_id, current_user.id, db)
+    return {"code": code, "chat_id": chat_id}
+
+
+@router.get("/chats/{chat_id}/collaboration")
+def get_collaboration_session(
+    chat_id: int,
+    current_user: User = Depends(AuthService.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get the active collaboration session code for a chat, if any."""
+    # Verify user is a member of the chat
+    membership = (
+        db.query(ChatMember)
+        .filter(ChatMember.chat_id == chat_id, ChatMember.user_id == current_user.id)
+        .first()
+    )
+    if not membership:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    code = collaboration_manager.get_session_by_chat_id(chat_id, db)
+    if not code:
+        return {"code": None, "chat_id": chat_id}
     return {"code": code, "chat_id": chat_id}
 
 
@@ -57,8 +79,8 @@ async def collaborate_websocket(
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
-    # Join session
-    session = await collaboration_manager.join_session(code, user.id, user.username, websocket)
+    # Join session (now also handles DB membership)
+    session = await collaboration_manager.join_session(code, user.id, user.username, websocket, db)
     if not session:
         await websocket.accept()
         await websocket.send_json({"type": "error", "message": "Session not found or full (max 3 users)"})
@@ -70,6 +92,7 @@ async def collaborate_websocket(
     # Send initial state
     await websocket.send_json({
         "type": "session_state",
+        "chat_id": session.chat_id,
         "workflow_data": session.workflow_data,
         "users": session.users,
         "locked_nodes": {
@@ -155,25 +178,64 @@ async def collaborate_websocket(
                         exclude_user_id=user.id,
                     )
 
+            elif msg_type == "typing":
+                # Broadcast typing indicator to other users
+                await collaboration_manager.broadcast(
+                    code,
+                    {
+                        "type": "typing",
+                        "user": {"id": user.id, "username": user.username},
+                    },
+                    exclude_user_id=user.id,
+                )
+
             elif msg_type == "chat_message":
                 content = data.get("content", "").strip()
                 if content:
                     try:
+                        # Broadcast typing indicator for AI
+                        await collaboration_manager.broadcast(
+                            code,
+                            {
+                                "type": "typing",
+                                "user": {"id": user.id, "username": user.username},
+                            },
+                            exclude_user_id=user.id,
+                        )
+
+                        # Capture title before AI call to detect changes
+                        from models import Chat as ChatModel
+                        chat_obj = db.query(ChatModel).filter(ChatModel.id == session.chat_id).first()
+                        old_title = chat_obj.title if chat_obj else None
+
                         ai_message = WorkflowService.create_message_with_ai(
                             session.chat_id, content, user.id, db
+                        )
+
+                        # Find the user message that was just created (different ID from ai_message)
+                        from models import Message
+                        user_msg = (
+                            db.query(Message)
+                            .filter(
+                                Message.chat_id == session.chat_id,
+                                Message.role == "user",
+                                Message.user_id == user.id,
+                            )
+                            .order_by(Message.created_at.desc())
+                            .first()
                         )
 
                         # Update session workflow if AI generated one
                         if ai_message.workflow_data:
                             collaboration_manager.update_workflow(code, ai_message.workflow_data)
 
-                        # Broadcast the user message to others
+                        # Broadcast the user message to others (with correct user_msg ID)
                         await collaboration_manager.broadcast(
                             code,
                             {
                                 "type": "new_message",
                                 "message": {
-                                    "id": ai_message.id,
+                                    "id": user_msg.id if user_msg else ai_message.id - 1,
                                     "chat_id": session.chat_id,
                                     "user_id": user.id,
                                     "role": "user",
@@ -199,19 +261,30 @@ async def collaborate_websocket(
                             },
                         )
 
-                        # Also send to the sender directly (broadcast excluded them for new_message)
-                        await websocket.send_json({
-                            "type": "ai_response",
-                            "message": {
-                                "id": ai_message.id,
-                                "chat_id": session.chat_id,
-                                "role": "assistant",
-                                "content": ai_message.content,
-                                "workflow_data": ai_message.workflow_data,
-                            },
-                        })
+                        # Broadcast typing_done to unblock all inputs
+                        await collaboration_manager.broadcast(
+                            code,
+                            {"type": "typing_done"},
+                        )
+
+                        # Check if title changed and broadcast update
+                        db.refresh(chat_obj)
+                        if chat_obj and chat_obj.title != old_title:
+                            await collaboration_manager.broadcast(
+                                code,
+                                {
+                                    "type": "title_update",
+                                    "chat_id": session.chat_id,
+                                    "title": chat_obj.title,
+                                },
+                            )
 
                     except Exception as e:
+                        # Unblock inputs on error too
+                        await collaboration_manager.broadcast(
+                            code,
+                            {"type": "typing_done"},
+                        )
                         await websocket.send_json({
                             "type": "error",
                             "message": f"Failed to process message: {str(e)}",

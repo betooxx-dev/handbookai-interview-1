@@ -7,6 +7,7 @@ from database import get_db
 from models import User
 from schemas import ChatCreate, ChatResponse, ChatWithMessages
 from services import AuthService
+from services.collaboration_manager import collaboration_manager
 from controllers import ChatController
 
 router = APIRouter(prefix="/chats", tags=["Chats"])
@@ -45,3 +46,20 @@ def delete_chat(
     db: Session = Depends(get_db),
 ):
     return ChatController.delete_chat(chat_id, current_user, db)
+
+
+@router.delete("/{chat_id}/members/{user_id}")
+async def remove_member(
+    chat_id: int,
+    user_id: int,
+    current_user: User = Depends(AuthService.get_current_user),
+    db: Session = Depends(get_db),
+):
+    result = ChatController.remove_member(chat_id, user_id, current_user, db)
+
+    # Send "kicked" WebSocket message to the removed user if they're connected
+    session_code = collaboration_manager.get_session_by_chat_id(chat_id, db)
+    if session_code:
+        await collaboration_manager.kick_user(session_code, user_id)
+
+    return result

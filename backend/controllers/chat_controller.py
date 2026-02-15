@@ -21,3 +21,7 @@ class ChatController:
     @staticmethod
     def delete_chat(chat_id: int, current_user: User, db: Session):
         return ChatService.delete_chat(chat_id, current_user.id, db)
+
+    @staticmethod
+    def remove_member(chat_id: int, target_user_id: int, current_user: User, db: Session):
+        return ChatService.remove_member(chat_id, current_user.id, target_user_id, db)

@@ -14,4 +14,4 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    chats = relationship("Chat", back_populates="user")
+    chat_memberships = relationship("ChatMember", back_populates="user")

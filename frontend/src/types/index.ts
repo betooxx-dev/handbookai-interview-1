@@ -10,6 +10,7 @@ export interface Chat {
     title: string;
     created_at: string;
     updated_at: string;
+    role?: "owner" | "collaborator";
 }
 
 export interface Message {
@@ -45,12 +46,14 @@ export interface CollabUser {
 
 export interface CollaborationPanelProps {
     chatId: number | null;
+    chatRole?: "owner" | "collaborator" | null;
     sessionCode: string | null;
     users: CollabUser[];
     isConnected: boolean;
     onCreateSession: (chatId: number) => Promise<void>;
     onJoinSession: (code: string) => Promise<void>;
     onLeaveSession: () => void;
+    onKickUser?: (userId: number) => void;
 }
 
 export interface LockedNode {
@@ -73,6 +76,7 @@ export interface UseCollaborationReturn {
     users: CollabUser[];
     lockedNodes: Record<string, LockedNode>;
     isConnected: boolean;
+    typingUser: CollabUser | null;
     createSession: (chatId: number) => Promise<void>;
     joinSession: (code: string) => Promise<void>;
     leaveSession: () => void;
@@ -80,10 +84,15 @@ export interface UseCollaborationReturn {
     lockNode: (nodeId: string) => void;
     unlockNode: (nodeId: string) => void;
     sendChatMessage: (content: string) => void;
+    sendTyping: () => void;
+    kickUser: (userId: number) => void;
 }
 
 export interface CollaborationCallbacks {
     onRemoteWorkflowUpdate?: (workflowData: string, fromUser: CollabUser) => void;
     onNewMessage?: (message: any) => void;
     onAiResponse?: (message: any) => void;
+    onKicked?: () => void;
+    onConnectedToChat?: (chatId: number) => void;
+    onTitleUpdate?: (chatId: number, title: string) => void;
 }

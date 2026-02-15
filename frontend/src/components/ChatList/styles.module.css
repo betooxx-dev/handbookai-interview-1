@@ -7,7 +7,7 @@
 }
 
 .header {
-  padding: 20px;
+  padding: 16px 20px;
   border-bottom: 1px solid #e0e0e0;
   display: flex;
   justify-content: space-between;
@@ -20,20 +20,117 @@
   color: #FC005C;
 }
 
-.newChatButton {
-  padding: 8px 16px;
-  background: #FC005C;
-  color: white;
-  border: none;
-  border-radius: 24px;
-  font-size: 14px;
-  font-weight: 500;
-  transition: background 0.2s;
+.headerButtons {
+  display: flex;
+  gap: 8px;
 }
 
-.newChatButton:hover {
-  background: #9c0039;
+.iconButton {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #FC005C;
+  color: white;
 }
+
+.iconButton:hover {
+  background: #d10049;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(252, 0, 92, 0.3);
+}
+
+.collabButton {
+  background: #4f5acf;
+}
+
+.collabButton:hover {
+  background: #3d49b8;
+  box-shadow: 0 2px 8px rgba(79, 90, 207, 0.3);
+}
+
+.iconButtonActive {
+  background: #3d49b8;
+  box-shadow: 0 0 0 3px rgba(79, 90, 207, 0.25);
+}
+
+/* Join bar */
+
+.joinBar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #eef0ff;
+  border-bottom: 1px solid #d0d5f0;
+  animation: slideDown 0.15s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.joinInput {
+  flex: 1;
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid #c7ccf0;
+  border-radius: 8px;
+  color: #1f2937;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  text-align: center;
+  transition: all 0.2s ease;
+}
+
+.joinInput::placeholder {
+  color: #b0b5d0;
+  letter-spacing: 3px;
+  font-weight: 500;
+}
+
+.joinInput:focus {
+  outline: none;
+  border-color: #4f5acf;
+  box-shadow: 0 0 0 3px rgba(79, 90, 207, 0.12);
+}
+
+.joinButton {
+  padding: 8px 16px;
+  background: #4f5acf;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.joinButton:hover:not(:disabled) {
+  background: #3d49b8;
+}
+
+.joinButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Chat list */
 
 .chatList {
   flex: 1;
@@ -53,16 +150,44 @@
   background: #ffaccb;
 }
 
+.chatItem.shared {
+  background: #e0e5ff;
+  border: 1px solid #b8c0f0;
+}
+
 .chatItem:hover {
   background: #f0f0f0;
+}
+
+.chatItem.shared:hover {
+  background: #d0d6f5;
 }
 
 .chatItem.active {
   background: #FC005C;
 }
 
+.chatItem.active.shared {
+  background: #4f5acf;
+  border-color: #4f5acf;
+}
+
 .chatItem.active .chatTitle {
   color: white;
+}
+
+.chatItem.active .sharedBadge {
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.chatTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
 }
 
 .chatTitle {
@@ -72,6 +197,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
+}
+
+.sharedBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #4f5acf;
+  background: rgba(79, 90, 207, 0.1);
+  border: 1px solid rgba(79, 90, 207, 0.2);
+  padding: 2px 8px;
+  border-radius: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .deleteButton {
@@ -87,6 +224,7 @@
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
+  flex-shrink: 0;
 }
 
 .chatItem:hover .deleteButton {

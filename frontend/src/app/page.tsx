@@ -4,8 +4,9 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '@/store/auth.store';
 import { AuthForm, ChatList, ChatWindow, WorkflowVisualization, CollaborationPanel } from '@/components';
 import { ChatService } from '@/services/chat.service';
+import { CollaborationService } from '@/services/collaboration.service';
 import { useCollaboration } from '@/hooks/useCollaboration';
-import { Message } from '@/types';
+import { Chat, Message } from '@/types';
 import '../styles/globals.css';
 import styles from './page.module.css';
 
@@ -15,11 +16,14 @@ export default function Home() {
   const logout = useAuthStore((state) => state.logout);
   const checkAuth = useAuthStore((state) => state.checkAuth);
   const [selectedChatId, setSelectedChatId] = useState<number | null>(null);
+  const [selectedChatRole, setSelectedChatRole] = useState<"owner" | "collaborator" | null>(null);
   const [workflowData, setWorkflowData] = useState<string | null>(null);
   const [currentMessageId, setCurrentMessageId] = useState<number | null>(null);
   const [isRemoteUpdate, setIsRemoteUpdate] = useState(false);
   const [remoteMessages, setRemoteMessages] = useState<Message[]>([]);
   const [hasMounted, setHasMounted] = useState(false);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [refreshChatsKey, setRefreshChatsKey] = useState(0);
 
   const handleWorkflowUpdate = (data: string | null, messageId?: number) => {
     setWorkflowData(data);
@@ -57,7 +61,76 @@ export default function Home() {
         setTimeout(() => setIsRemoteUpdate(false), 100);
       }
     },
+    onKicked: () => {
+      setSelectedChatId(null);
+      setSelectedChatRole(null);
+      setWorkflowData(null);
+      setRemoteMessages([]);
+      reloadAllChats();
+    },
+    onConnectedToChat: async (chatId) => {
+      // Fired when WS session_state arrives — used for join-via-code auto-select
+      if (chatId !== selectedChatId) {
+        const freshChats = await reloadAllChats();
+        const chat = freshChats.find((c: Chat) => c.id === chatId);
+        setSelectedChatRole((chat?.role as "owner" | "collaborator") || 'collaborator');
+        setSelectedChatId(chatId);
+      }
+    },
+    onTitleUpdate: (chatId, title) => {
+      // Update local chats array and refresh ChatList
+      setChats((prev) => prev.map((c) => c.id === chatId ? { ...c, title } : c));
+      setRefreshChatsKey((k) => k + 1);
+    },
   });
+
+  const reloadAllChats = async (): Promise<Chat[]> => {
+    try {
+      const data = await ChatService.getChats();
+      setChats(data);
+      setRefreshChatsKey((k) => k + 1);
+      return data;
+    } catch (error) {
+      console.error('Failed to load chats:', error);
+      return [];
+    }
+  };
+
+  const handleSelectChat = useCallback(async (chatId: number | null) => {
+    if (collaboration.isConnected) {
+      collaboration.leaveSession();
+    }
+
+    setSelectedChatId(chatId);
+    setRemoteMessages([]);
+
+    if (!chatId) {
+      setSelectedChatRole(null);
+      return;
+    }
+
+    const chat = chats.find((c) => c.id === chatId);
+    const role = chat?.role || 'owner';
+    setSelectedChatRole(role as "owner" | "collaborator");
+
+    // Auto-connect to active collaboration session if any
+    try {
+      const sessionInfo = await CollaborationService.getSessionForChat(chatId);
+      if (sessionInfo.code) {
+        collaboration.joinSession(sessionInfo.code);
+      }
+    } catch (error) {
+      console.debug('No active collaboration session for this chat');
+    }
+  }, [collaboration.isConnected, collaboration.leaveSession, collaboration.joinSession, chats]);
+
+  const handleJoinWithCode = useCallback((code: string) => {
+    if (collaboration.isConnected) {
+      collaboration.leaveSession();
+    }
+    collaboration.joinSession(code);
+    // The onConnectedToChat callback will handle auto-selecting the chat
+  }, [collaboration.isConnected, collaboration.leaveSession, collaboration.joinSession]);
 
   const handlePositionChangeWithCollab = useCallback(
     async (updatedWorkflow: string) => {
@@ -88,8 +161,10 @@ export default function Home() {
   }, [checkAuth]);
 
   useEffect(() => {
-    setRemoteMessages([]);
-  }, [selectedChatId]);
+    if (isAuthenticated) {
+      reloadAllChats();
+    }
+  }, [isAuthenticated]);
 
   if (!hasMounted) return null;
 
@@ -104,6 +179,7 @@ export default function Home() {
           <button onClick={() => {
             collaboration.leaveSession();
             setSelectedChatId(null);
+            setSelectedChatRole(null);
             setWorkflowData(null);
             logout();
           }} className={styles.logoutButton}>
@@ -115,11 +191,10 @@ export default function Home() {
       <div className={styles.mainContent}>
         <div className={styles.chatListSection}>
           <ChatList
-            onSelectChat={(chatId) => {
-              if (collaboration.isConnected) collaboration.leaveSession();
-              setSelectedChatId(chatId);
-            }}
+            onSelectChat={handleSelectChat}
             selectedChatId={selectedChatId}
+            refreshKey={refreshChatsKey}
+            onJoinWithCode={handleJoinWithCode}
           />
         </div>
 
@@ -130,6 +205,8 @@ export default function Home() {
             isCollaborating={collaboration.isConnected}
             onSendCollabMessage={collaboration.sendChatMessage}
             remoteMessages={remoteMessages}
+            typingUser={collaboration.typingUser}
+            onTyping={collaboration.sendTyping}
           />
         </div>
 
@@ -137,12 +214,14 @@ export default function Home() {
           <div className={styles.workflowHeader}>
             <CollaborationPanel
               chatId={selectedChatId}
+              chatRole={selectedChatRole}
               sessionCode={collaboration.sessionCode}
               users={collaboration.users}
               isConnected={collaboration.isConnected}
               onCreateSession={collaboration.createSession}
               onJoinSession={collaboration.joinSession}
               onLeaveSession={collaboration.leaveSession}
+              onKickUser={collaboration.kickUser}
             />
           </div>
           <WorkflowVisualization

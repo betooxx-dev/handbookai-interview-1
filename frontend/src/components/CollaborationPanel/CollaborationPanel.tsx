@@ -3,19 +3,22 @@
 import { useState } from 'react';
 import styles from './styles.module.css';
 import { CollaborationPanelProps } from "@/types";
+import { CollaborationService } from '@/services/collaboration.service';
 
 export default function CollaborationPanel({
     chatId,
+    chatRole,
     sessionCode,
     users,
     isConnected,
     onCreateSession,
-    onJoinSession,
     onLeaveSession,
+    onKickUser,
 }: CollaborationPanelProps) {
-    const [joinCode, setJoinCode] = useState('');
     const [loading, setLoading] = useState(false);
     const [copied, setCopied] = useState(false);
+
+    const isOwner = chatRole === 'owner';
 
     const handleCreate = async () => {
         if (!chatId) return;
@@ -29,24 +32,23 @@ export default function CollaborationPanel({
         }
     };
 
-    const handleJoin = async () => {
-        if (!joinCode.trim()) return;
-        setLoading(true);
-        try {
-            await onJoinSession(joinCode.trim().toUpperCase());
-            setJoinCode('');
-        } catch (error) {
-            console.error('Failed to join session:', error);
-        } finally {
-            setLoading(false);
-        }
+    const handleCopyCode = async () => {
+        if (!sessionCode) return;
+        await navigator.clipboard.writeText(sessionCode);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
     };
 
-    const handleCopyCode = async () => {
-      if (!sessionCode) return;
-      await navigator.clipboard.writeText(sessionCode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    const handleKickUser = async (userId: number) => {
+        if (!chatId || !isOwner) return;
+        if (!confirm('Remove this user from the chat?')) return;
+
+        try {
+            await CollaborationService.removeMember(chatId, userId);
+            if (onKickUser) onKickUser(userId);
+        } catch (error) {
+            console.error('Failed to kick user:', error);
+        }
     };
 
     if (!chatId) return null;
@@ -66,6 +68,15 @@ export default function CollaborationPanel({
                         {users.map((user) => (
                             <span key={user.id} className={styles.userBadge}>
                                 {user.username}
+                                {isOwner && onKickUser && (
+                                    <button
+                                        className={styles.kickButton}
+                                        onClick={() => handleKickUser(user.id)}
+                                        title="Remove user"
+                                    >
+                                        ×
+                                    </button>
+                                )}
                             </span>
                         ))}
                     </div>
@@ -86,25 +97,6 @@ export default function CollaborationPanel({
             >
                 {loading ? '...' : '🤝 Collaborate'}
             </button>
-            <div className={styles.divider} />
-            <div className={styles.joinSection}>
-                <input
-                    type="text"
-                    className={styles.joinInput}
-                    placeholder="Enter code"
-                    value={joinCode}
-                    onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                    maxLength={6}
-                    onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
-                />
-                <button
-                    className={styles.joinButton}
-                    onClick={handleJoin}
-                    disabled={loading || joinCode.length < 6}
-                >
-                    Join
-                </button>
-            </div>
         </div>
     );
 }

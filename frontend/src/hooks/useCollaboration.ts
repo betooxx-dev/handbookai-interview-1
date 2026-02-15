@@ -10,10 +10,13 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
     const [users, setUsers] = useState<CollabUser[]>([]);
     const [lockedNodes, setLockedNodes] = useState<Record<string, LockedNode>>({});
     const [isConnected, setIsConnected] = useState(false);
+    const [typingUser, setTypingUser] = useState<CollabUser | null>(null);
 
     const wsRef = useRef<WebSocket | null>(null);
     const callbacksRef = useRef(callbacks);
     callbacksRef.current = callbacks;
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const sessionCodeRef = useRef<string | null>(null);
 
     const token = useAuthStore((state) => state.token);
 
@@ -55,6 +58,10 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         if (data.workflow_data && callbacksRef.current.onRemoteWorkflowUpdate) {
                             callbacksRef.current.onRemoteWorkflowUpdate(data.workflow_data, { id: 0, username: 'session' });
                         }
+                        // Notify which chat we connected to
+                        if (data.chat_id && callbacksRef.current.onConnectedToChat) {
+                            callbacksRef.current.onConnectedToChat(data.chat_id);
+                        }
                         break;
 
                     case 'user_joined':
@@ -86,7 +93,6 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         break;
 
                     case 'node_lock_denied':
-                        // Could show a toast here
                         console.warn(`Node ${data.node_id} is locked by ${data.locked_by.username}`);
                         break;
 
@@ -96,6 +102,41 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                             delete next[data.node_id];
                             return next;
                         });
+                        break;
+
+                    case 'typing':
+                        setTypingUser(data.user);
+                        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                        typingTimeoutRef.current = setTimeout(() => {
+                            setTypingUser(null);
+                        }, 3000);
+                        break;
+
+                    case 'typing_done':
+                        setTypingUser(null);
+                        if (typingTimeoutRef.current) {
+                            clearTimeout(typingTimeoutRef.current);
+                            typingTimeoutRef.current = null;
+                        }
+                        break;
+
+                    case 'kicked':
+                        if (callbacksRef.current.onKicked) {
+                            callbacksRef.current.onKicked();
+                        }
+                        setSessionCode(null);
+                        sessionCodeRef.current = null;
+                        setUsers([]);
+                        setLockedNodes({});
+                        setIsConnected(false);
+                        setTypingUser(null);
+                        wsRef.current = null;
+                        break;
+
+                    case 'title_update':
+                        if (callbacksRef.current.onTitleUpdate && data.chat_id && data.title) {
+                            callbacksRef.current.onTitleUpdate(data.chat_id, data.title);
+                        }
                         break;
 
                     case 'new_message':
@@ -123,11 +164,13 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
     const createSession = useCallback(async (chatId: number) => {
         const { code } = await CollaborationService.createSession(chatId);
         setSessionCode(code);
+        sessionCodeRef.current = code;
         connectWs(code);
     }, [connectWs]);
 
     const joinSession = useCallback(async (code: string) => {
         setSessionCode(code);
+        sessionCodeRef.current = code;
         connectWs(code);
     }, [connectWs]);
 
@@ -137,9 +180,11 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
             wsRef.current = null;
         }
         setSessionCode(null);
+        sessionCodeRef.current = null;
         setUsers([]);
         setLockedNodes({});
         setIsConnected(false);
+        setTypingUser(null);
     }, []);
 
     const sendWorkflowUpdate = useCallback((workflowData: string) => {
@@ -166,11 +211,23 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
         }
     }, []);
 
-    // Cleanup on unmount
+    const sendTyping = useCallback(() => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'typing' }));
+        }
+    }, []);
+
+    const kickUser = useCallback((userId: number) => {
+        setUsers((prev) => prev.filter((u) => u.id !== userId));
+    }, []);
+
     useEffect(() => {
         return () => {
             if (wsRef.current) {
                 wsRef.current.close();
+            }
+            if (typingTimeoutRef.current) {
+                clearTimeout(typingTimeoutRef.current);
             }
         };
     }, []);
@@ -180,6 +237,7 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
         users,
         lockedNodes,
         isConnected,
+        typingUser,
         createSession,
         joinSession,
         leaveSession,
@@ -187,5 +245,7 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
         lockNode,
         unlockNode,
         sendChatMessage,
+        sendTyping,
+        kickUser,
     };
 }

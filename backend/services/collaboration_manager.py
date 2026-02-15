@@ -6,11 +6,12 @@ from typing import Optional
 from fastapi import WebSocket
 from sqlalchemy.orm import Session
 
-from models import Message
+from models import Message, ChatMember
+from models.collaboration_session import CollaborationSession as CollaborationSessionModel
 
 
-class CollaborationSession:
-    """Represents an active collaboration session."""
+class ActiveSession:
+    """Represents an active collaboration session's in-memory state (WebSocket connections)."""
 
     def __init__(self, code: str, chat_id: int, owner_id: int, workflow_data: Optional[str]):
         self.code = code
@@ -27,9 +28,6 @@ class CollaborationSession:
             for uid, info in self.connections.items()
         ]
 
-    def is_full(self) -> bool:
-        return len(self.connections) >= 3
-
 
 class CollaborationManager:
     """Singleton manager for all active collaboration sessions."""
@@ -39,21 +37,54 @@ class CollaborationManager:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._sessions: dict[str, CollaborationSession] = {}  # {code: session}
+            cls._instance._sessions: dict[str, ActiveSession] = {}  # {code: session}
             cls._instance._chat_sessions: dict[int, str] = {}  # {chat_id: code}
         return cls._instance
 
-    def _generate_code(self) -> str:
-        """Generate a unique 6-char alphanumeric code."""
+    def _generate_code(self, db: Session) -> str:
+        """Generate a unique 6-char alphanumeric code (unique across DB and memory)."""
         chars = string.ascii_uppercase + string.digits
         while True:
             code = "".join(random.choices(chars, k=6))
             if code not in self._sessions:
-                return code
+                # Also check DB uniqueness
+                existing = db.query(CollaborationSessionModel).filter(
+                    CollaborationSessionModel.code == code
+                ).first()
+                if not existing:
+                    return code
 
     def create_session(self, chat_id: int, owner_id: int, db: Session) -> str:
         """Create a new collaboration session for a chat. Returns the session code."""
-        # Check if chat already has an active session
+        # Check if chat already has an active session in DB
+        existing_db_session = (
+            db.query(CollaborationSessionModel)
+            .filter(
+                CollaborationSessionModel.chat_id == chat_id,
+                CollaborationSessionModel.is_active == True,
+            )
+            .first()
+        )
+        if existing_db_session:
+            # Ensure in-memory session exists too
+            if existing_db_session.code not in self._sessions:
+                last_workflow_msg = (
+                    db.query(Message)
+                    .filter(
+                        Message.chat_id == chat_id,
+                        Message.role == "assistant",
+                        Message.workflow_data.isnot(None),
+                    )
+                    .order_by(Message.created_at.desc())
+                    .first()
+                )
+                workflow_data = last_workflow_msg.workflow_data if last_workflow_msg else None
+                session = ActiveSession(existing_db_session.code, chat_id, owner_id, workflow_data)
+                self._sessions[existing_db_session.code] = session
+                self._chat_sessions[chat_id] = existing_db_session.code
+            return existing_db_session.code
+
+        # Also check in-memory (fallback)
         if chat_id in self._chat_sessions:
             return self._chat_sessions[chat_id]
 
@@ -70,30 +101,112 @@ class CollaborationManager:
         )
         workflow_data = last_workflow_msg.workflow_data if last_workflow_msg else None
 
-        code = self._generate_code()
-        session = CollaborationSession(code, chat_id, owner_id, workflow_data)
+        code = self._generate_code(db)
+
+        # Persist to DB
+        db_session = CollaborationSessionModel(
+            chat_id=chat_id,
+            code=code,
+            created_by=owner_id,
+            is_active=True,
+        )
+        db.add(db_session)
+        db.commit()
+
+        # Create in-memory session
+        session = ActiveSession(code, chat_id, owner_id, workflow_data)
         self._sessions[code] = session
         self._chat_sessions[chat_id] = code
         return code
 
-    def get_session(self, code: str) -> Optional[CollaborationSession]:
+    def get_session(self, code: str) -> Optional[ActiveSession]:
         return self._sessions.get(code)
 
+    def get_session_by_chat_id(self, chat_id: int, db: Session) -> Optional[str]:
+        """Get the active session code for a chat, checking DB."""
+        # Check in-memory first
+        if chat_id in self._chat_sessions:
+            return self._chat_sessions[chat_id]
+
+        # Check DB
+        db_session = (
+            db.query(CollaborationSessionModel)
+            .filter(
+                CollaborationSessionModel.chat_id == chat_id,
+                CollaborationSessionModel.is_active == True,
+            )
+            .first()
+        )
+        if db_session:
+            return db_session.code
+        return None
+
     async def join_session(
-        self, code: str, user_id: int, username: str, ws: WebSocket
-    ) -> Optional[CollaborationSession]:
+        self, code: str, user_id: int, username: str, ws: WebSocket, db: Session
+    ) -> Optional[ActiveSession]:
         """Add a user to a session. Returns None if session not found or full."""
-        session = self._sessions.get(code)
-        if not session:
-            return None
-        if session.is_full() and user_id not in session.connections:
-            return None
+        # Look up session in DB if not in memory
+        if code not in self._sessions:
+            db_session = (
+                db.query(CollaborationSessionModel)
+                .filter(
+                    CollaborationSessionModel.code == code,
+                    CollaborationSessionModel.is_active == True,
+                )
+                .first()
+            )
+            if not db_session:
+                return None
+
+            # Reconstruct in-memory session
+            last_workflow_msg = (
+                db.query(Message)
+                .filter(
+                    Message.chat_id == db_session.chat_id,
+                    Message.role == "assistant",
+                    Message.workflow_data.isnot(None),
+                )
+                .order_by(Message.created_at.desc())
+                .first()
+            )
+            workflow_data = last_workflow_msg.workflow_data if last_workflow_msg else None
+            session = ActiveSession(code, db_session.chat_id, db_session.created_by, workflow_data)
+            self._sessions[code] = session
+            self._chat_sessions[db_session.chat_id] = code
+
+        session = self._sessions[code]
+
+        # Check member count in DB (limit is 3)
+        member_count = (
+            db.query(ChatMember)
+            .filter(ChatMember.chat_id == session.chat_id)
+            .count()
+        )
+
+        # If user is already a member, just connect
+        existing_member = (
+            db.query(ChatMember)
+            .filter(ChatMember.chat_id == session.chat_id, ChatMember.user_id == user_id)
+            .first()
+        )
+
+        if not existing_member:
+            if member_count >= 3:
+                return None
+            # Add as collaborator in DB
+            new_member = ChatMember(
+                chat_id=session.chat_id,
+                user_id=user_id,
+                role="collaborator",
+            )
+            db.add(new_member)
+            db.commit()
 
         session.connections[user_id] = {"ws": ws, "username": username}
         return session
 
     async def leave_session(self, code: str, user_id: int):
-        """Remove a user from a session, release their locks, destroy if empty."""
+        """Remove a user's WebSocket connection from a session. Do NOT destroy the session."""
         session = self._sessions.get(code)
         if not session:
             return
@@ -105,11 +218,14 @@ class CollaborationManager:
         for node_id in nodes_to_unlock:
             del session.locked_nodes[node_id]
 
-        # Remove connection
+        # Get username before removing
+        user_info = session.connections.get(user_id, {})
+        username = user_info.get("username", "Unknown")
+
+        # Remove WebSocket connection
         session.connections.pop(user_id, None)
 
         # Broadcast user left + lock releases
-        username = "Unknown"
         await self.broadcast(
             code,
             {
@@ -120,10 +236,30 @@ class CollaborationManager:
             exclude_user_id=user_id,
         )
 
-        # Destroy session if empty
+        # Clean up in-memory session if empty (but keep DB session active)
         if not session.connections:
             self._sessions.pop(code, None)
             self._chat_sessions.pop(session.chat_id, None)
+
+    async def kick_user(self, code: str, user_id: int):
+        """Kick a user: send kicked message, close their WebSocket, and clean up."""
+        session = self._sessions.get(code)
+        if not session:
+            return
+
+        user_info = session.connections.get(user_id)
+        if not user_info:
+            return
+
+        # Send kicked message to the user
+        try:
+            await user_info["ws"].send_json({"type": "kicked"})
+            await user_info["ws"].close()
+        except Exception:
+            pass
+
+        # Clean up their connection and locks
+        await self.leave_session(code, user_id)
 
     def lock_node(self, code: str, node_id: str, user_id: int) -> tuple[bool, Optional[int]]:
         """Try to lock a node. Returns (success, locked_by_user_id)."""

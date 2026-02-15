@@ -103,10 +103,12 @@ class WorkflowService:
 
     @staticmethod
     def update_workflow(message_id: int, workflow_data: dict, user_id: int, db: Session) -> dict:
+        from models import ChatMember
         message = (
             db.query(Message)
-            .join(Chat)
-            .filter(Message.id == message_id, Chat.user_id == user_id)
+            .join(Chat, Message.chat_id == Chat.id)
+            .join(ChatMember, ChatMember.chat_id == Chat.id)
+            .filter(Message.id == message_id, ChatMember.user_id == user_id)
             .first()
         )
         if not message:

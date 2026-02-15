@@ -12,6 +12,7 @@ class ChatResponse(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
+    role: Optional[str] = None
 
     class Config:
         from_attributes = True

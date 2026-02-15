@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { ChatService } from '@/services/chat.service';
-import { Message } from '@/types';
+import { Message, CollabUser } from '@/types';
 import styles from './styles.module.css';
 
 interface ChatWindowProps {
@@ -11,6 +11,8 @@ interface ChatWindowProps {
     isCollaborating?: boolean;
     onSendCollabMessage?: (content: string) => void;
     remoteMessages?: Message[];
+    typingUser?: CollabUser | null;
+    onTyping?: () => void;
 }
 
 export default function ChatWindow({
@@ -19,11 +21,16 @@ export default function ChatWindow({
     isCollaborating = false,
     onSendCollabMessage,
     remoteMessages,
+    typingUser,
+    onTyping,
 }: ChatWindowProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const typingDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+    const isInputBlocked = !!typingUser;
 
     useEffect(() => {
         if (chatId) {
@@ -69,14 +76,25 @@ export default function ChatWindow({
         }
     };
 
+    const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setInput(e.target.value);
+
+        // Send typing indicator (debounced)
+        if (isCollaborating && onTyping && e.target.value.trim()) {
+            if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current);
+            typingDebounceRef.current = setTimeout(() => {
+                onTyping();
+            }, 300);
+        }
+    };
+
     const handleSend = async () => {
-        if (!input.trim() || !chatId || loading) return;
+        if (!input.trim() || !chatId || loading || isInputBlocked) return;
 
         const userMessage = input;
         setInput('');
 
         if (isCollaborating && onSendCollabMessage) {
-            setLoading(true);
             const tempUserMessage: Message = {
                 id: Date.now(),
                 chat_id: chatId,
@@ -186,30 +204,42 @@ export default function ChatWindow({
             </div>
 
             <div className={styles.inputArea}>
-                <button
-                    onClick={handleUndo}
-                    className={styles.undoButton}
-                    disabled={loading || messages.length < 2}
-                    title="Undo last change"
-                >
-                    ↶ Undo
-                </button>
-                <textarea
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    placeholder="Describe the workflow you need..."
-                    className={styles.input}
-                    rows={3}
-                    disabled={loading}
-                />
-                <button
-                    onClick={handleSend}
-                    className={styles.sendButton}
-                    disabled={loading || !input.trim()}
-                >
-                    Send
-                </button>
+                {typingUser && (
+                    <div className={styles.typingIndicator}>
+                        <div className={styles.typingDots}>
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                        <span>{typingUser.username} is typing...</span>
+                    </div>
+                )}
+                <div className={styles.inputRow}>
+                    <button
+                        onClick={handleUndo}
+                        className={styles.undoButton}
+                        disabled={loading || messages.length < 2 || isInputBlocked}
+                        title="Undo last change"
+                    >
+                        ↶ Undo
+                    </button>
+                    <textarea
+                        value={input}
+                        onChange={handleInputChange}
+                        onKeyPress={handleKeyPress}
+                        placeholder={isInputBlocked ? `${typingUser?.username} is typing...` : "Describe the workflow you need..."}
+                        className={`${styles.input} ${isInputBlocked ? styles.inputBlocked : ''}`}
+                        rows={3}
+                        disabled={loading || isInputBlocked}
+                    />
+                    <button
+                        onClick={handleSend}
+                        className={styles.sendButton}
+                        disabled={loading || !input.trim() || isInputBlocked}
+                    >
+                        Send
+                    </button>
+                </div>
             </div>
         </div>
     );
