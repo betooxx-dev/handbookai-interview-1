@@ -2,15 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import styles from './styles.module.css';
-import { CollaborationPanelProps } from "@/types";
+import { CollaborationPanelProps, CollabUser } from "@/types";
 import { CollaborationService } from '@/services/collaboration.service';
 import { useAuthStore } from '@/store/auth.store';
-
-interface ChatMember {
-    id: number;
-    username: string;
-    role: string;
-}
 
 export default function CollaborationPanel({
     chatId,
@@ -26,7 +20,7 @@ export default function CollaborationPanel({
     const currentUser = useAuthStore((state) => state.user);
     const [loading, setLoading] = useState(false);
     const [copied, setCopied] = useState(false);
-    const [members, setMembers] = useState<ChatMember[]>([]);
+    const [members, setMembers] = useState<CollabUser[]>([]);
 
     const isOwner = chatRole === 'owner';
 
@@ -42,7 +36,7 @@ export default function CollaborationPanel({
         if (!chatId) return;
         try {
             const data = await CollaborationService.getMembers(chatId);
-            setMembers(data);
+            setMembers(data as CollabUser[]);
         } catch (error) {
             console.error('Failed to load members:', error);
         }

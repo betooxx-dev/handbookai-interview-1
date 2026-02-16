@@ -21,7 +21,6 @@ def create_collaboration_session(
     db: Session = Depends(get_db),
 ):
     """Create a collaboration session for a chat. Returns the join code."""
-    # Verify user is a member of the chat
     from services.chat_service import ChatService
     ChatService.get_chat(chat_id, current_user.id, db)
 
@@ -36,7 +35,6 @@ def get_collaboration_session(
     db: Session = Depends(get_db),
 ):
     """Get the active collaboration session code for a chat, if any."""
-    # Verify user is a member of the chat
     membership = (
         db.query(ChatMember)
         .filter(ChatMember.chat_id == chat_id, ChatMember.user_id == current_user.id)

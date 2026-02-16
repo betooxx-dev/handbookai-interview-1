@@ -75,7 +75,6 @@ export default function Home() {
       reloadAllChats();
     },
     onConnectedToChat: async (chatId) => {
-      // Fired when WS session_state arrives — used for join-via-code auto-select
       if (chatId !== selectedChatId) {
         const freshChats = await reloadAllChats();
         const chat = freshChats.find((c: Chat) => c.id === chatId);
@@ -114,11 +113,9 @@ export default function Home() {
       return;
     }
 
-    // Verify the user is still a member by fetching the chat
     try {
       await ChatService.getChat(chatId);
     } catch {
-      // User is no longer a member of this chat
       setSelectedChatId(null);
       setSelectedChatRole(null);
       await reloadAllChats();
@@ -131,23 +128,19 @@ export default function Home() {
     const role = chat?.role || 'owner';
     setSelectedChatRole(role as "owner" | "collaborator");
 
-    // Auto-connect to active collaboration session if any
     try {
       const sessionInfo = await CollaborationService.getSessionForChat(chatId);
-      if (sessionInfo.code) {
-        collaboration.joinSession(sessionInfo.code);
-      }
+      if (sessionInfo.code) collaboration.joinSession(sessionInfo.code);
+      
     } catch (error) {
       console.debug('No active collaboration session for this chat');
     }
   }, [collaboration.isConnected, collaboration.leaveSession, collaboration.joinSession, chats]);
 
   const handleJoinWithCode = useCallback((code: string) => {
-    if (collaboration.isConnected) {
-      collaboration.leaveSession();
-    }
+    if (collaboration.isConnected) collaboration.leaveSession();
+    
     collaboration.joinSession(code);
-    // The onConnectedToChat callback will handle auto-selecting the chat
   }, [collaboration.isConnected, collaboration.leaveSession, collaboration.joinSession]);
 
   const handlePositionChangeWithCollab = useCallback(

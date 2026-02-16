@@ -43,6 +43,7 @@ export interface AuthState {
 export interface CollabUser {
     id: number;
     username: string;
+    role: "owner" | "collaborator" | null;
 }
 
 export interface CollaborationPanelProps {
@@ -98,4 +99,22 @@ export interface CollaborationCallbacks {
     onConnectedToChat?: (chatId: number) => void;
     onTitleUpdate?: (chatId: number, title: string) => void;
     onMemberAdded?: (chatId: number) => void;
+}
+
+export interface ChatListProps {
+    onSelectChat: (chatId: number | null) => void;
+    selectedChatId: number | null;
+    refreshKey?: number;
+    onJoinWithCode?: (code: string) => void;
+}
+
+export interface ChatWindowProps {
+    chatId: number | null;
+    onWorkflowUpdate: (workflowData: string | null, messageId?: number) => void;
+    onTitleUpdate?: (chatId: number, title: string) => void;
+    isCollaborating?: boolean;
+    onSendCollabMessage?: (content: string) => void;
+    remoteMessages?: Message[];
+    typingUser?: CollabUser | null;
+    onTyping?: () => void;
 }

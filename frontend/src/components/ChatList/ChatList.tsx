@@ -2,15 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { ChatService } from '@/services/chat.service';
-import { Chat } from '@/types';
+import { Chat, ChatListProps } from '@/types';
 import styles from './styles.module.css';
 
-interface ChatListProps {
-    onSelectChat: (chatId: number | null) => void;
-    selectedChatId: number | null;
-    refreshKey?: number;
-    onJoinWithCode?: (code: string) => void;
-}
 
 export default function ChatList({ onSelectChat, selectedChatId, refreshKey, onJoinWithCode }: ChatListProps) {
     const [chats, setChats] = useState<Chat[]>([]);

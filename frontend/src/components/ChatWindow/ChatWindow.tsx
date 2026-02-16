@@ -2,19 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { ChatService } from '@/services/chat.service';
-import { Message, CollabUser } from '@/types';
+import { Message, ChatWindowProps } from "@/types";
 import styles from './styles.module.css';
-
-interface ChatWindowProps {
-    chatId: number | null;
-    onWorkflowUpdate: (workflowData: string | null, messageId?: number) => void;
-    onTitleUpdate?: (chatId: number, title: string) => void;
-    isCollaborating?: boolean;
-    onSendCollabMessage?: (content: string) => void;
-    remoteMessages?: Message[];
-    typingUser?: CollabUser | null;
-    onTyping?: () => void;
-}
 
 export default function ChatWindow({
     chatId,
@@ -81,7 +70,6 @@ export default function ChatWindow({
     const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInput(e.target.value);
 
-        // Send typing indicator (debounced)
         if (isCollaborating && onTyping && e.target.value.trim()) {
             if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current);
             typingDebounceRef.current = setTimeout(() => {
@@ -124,13 +112,12 @@ export default function ChatWindow({
             const response = await ChatService.sendMessage(chatId, userMessage);
             await loadMessages();
 
-            if (response.workflow_data) {
-                onWorkflowUpdate(response.workflow_data, response.id);
-            }
+            if (response.workflow_data)
+              onWorkflowUpdate(response.workflow_data, response.id);
 
-            if (response.chat_title && onTitleUpdate) {
-                onTitleUpdate(chatId, response.chat_title);
-            }
+            if (response.chat_title && onTitleUpdate)
+              onTitleUpdate(chatId, response.chat_title);
+            
         } catch (error) {
             console.error('Failed to send message:', error);
             setMessages((prev) => prev.filter((msg) => msg.id !== tempUserMessage.id));

@@ -33,34 +33,28 @@ export default function WorkflowVisualization({
     const animationRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const parseWorkflow = useCallback((data: string | null) => {
-        if (!data) {
-            return { nodes: [], edges: [] };
-        }
+        if (!data) return { nodes: [], edges: [] };
 
         try {
             const workflow = JSON.parse(data);
 
             const adjacencyMap = new Map<string, string[]>();
             workflow.edges.forEach((edge: any) => {
-                if (!adjacencyMap.has(edge.from)) {
-                    adjacencyMap.set(edge.from, []);
-                }
+                if (!adjacencyMap.has(edge.from))
+                  adjacencyMap.set(edge.from, []);
                 adjacencyMap.get(edge.from)!.push(edge.to);
             });
 
             const incomingEdges = new Map<string, string[]>();
             workflow.edges.forEach((edge: any) => {
-                if (!incomingEdges.has(edge.to)) {
-                    incomingEdges.set(edge.to, []);
-                }
+                if (!incomingEdges.has(edge.to)) incomingEdges.set(edge.to, []);
+                
                 incomingEdges.get(edge.to)!.push(edge.from);
             });
 
             const mergeNodes = new Set<string>();
             incomingEdges.forEach((sources, target) => {
-                if (sources.length > 1) {
-                    mergeNodes.add(target);
-                }
+                if (sources.length > 1) mergeNodes.add(target);
             });
 
             const positions = new Map<string, { x: number; y: number }>();
@@ -301,7 +295,7 @@ export default function WorkflowVisualization({
               !styleChanged &&
               !draggableChanged
             ) {
-              return current; // Same reference → React skips re-render
+              return current;
             }
             return updated;
           });
