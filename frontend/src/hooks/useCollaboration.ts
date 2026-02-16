@@ -56,7 +56,7 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                             )
                         );
                         if (data.workflow_data && callbacksRef.current.onRemoteWorkflowUpdate) {
-                            callbacksRef.current.onRemoteWorkflowUpdate(data.workflow_data, { id: 0, username: 'session' });
+                            callbacksRef.current.onRemoteWorkflowUpdate(data.workflow_data, { id: 0, username: 'session', role: 'owner' });
                         }
                         // Notify which chat we connected to
                         if (data.chat_id && callbacksRef.current.onConnectedToChat) {
