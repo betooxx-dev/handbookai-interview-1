@@ -145,10 +145,9 @@ export default function Home() {
 
   const handlePositionChangeWithCollab = useCallback(
     async (updatedWorkflow: string) => {
-      if (collaboration.isConnected)
+      if (collaboration.isConnected) {
         collaboration.sendWorkflowUpdate(updatedWorkflow);
-
-      if (currentMessageId) {
+      } else if (currentMessageId) {
         try {
           await ChatService.updateWorkflowPositions(
             currentMessageId,
