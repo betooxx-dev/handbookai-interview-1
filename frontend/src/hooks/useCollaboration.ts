@@ -27,18 +27,34 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
     const nodeQueuesRef = useRef<Record<string, string[]>>({});
     const nodeDrainRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
-    const CHAT_CHAR_INTERVAL = 100;  // ms per character for chat text
-    const NODE_CHAR_INTERVAL = 150;  // ms per character for node text
-    const CHARS_PER_TICK = 1;       // characters to render per interval tick
+    const CHAT_CHAR_INTERVAL = 50;
+    const NODE_CHAR_INTERVAL = 700;
+    const CHARS_PER_TICK = 1;
+
+    const isServerStreamDoneRef = useRef(false);
+    const finalAiMessageRef = useRef<any>(null);
 
     const startChatDrain = useCallback(() => {
         if (chatDrainRef.current) return;
         chatDrainRef.current = setInterval(() => {
             const queue = chatQueueRef.current;
             if (queue.length === 0) {
-                if (chatDrainRef.current) {
-                    clearInterval(chatDrainRef.current);
-                    chatDrainRef.current = null;
+                // Only stop if the server has finished sending data
+                if (isServerStreamDoneRef.current) {
+                    if (chatDrainRef.current) {
+                        clearInterval(chatDrainRef.current);
+                        chatDrainRef.current = null;
+                    }
+
+                    // Final cleanup sequence
+                    setStreamingMessage('');
+                    setStreamingNodes({});
+                    isServerStreamDoneRef.current = false;
+
+                    if (callbacksRef.current.onAiStreamDone && finalAiMessageRef.current) {
+                        callbacksRef.current.onAiStreamDone(finalAiMessageRef.current);
+                        finalAiMessageRef.current = null;
+                    }
                 }
                 return;
             }
@@ -46,6 +62,7 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
             setStreamingMessage((prev) => prev + batch);
         }, CHAT_CHAR_INTERVAL);
     }, []);
+
     const startNodeDrain = useCallback((nodeId: string) => {
         if (nodeDrainRef.current[nodeId]) return;
         nodeDrainRef.current[nodeId] = setInterval(() => {
@@ -64,6 +81,7 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
             }));
         }, NODE_CHAR_INTERVAL);
     }, []);
+
     const flushAllQueues = useCallback(() => {
         if (chatDrainRef.current) {
             clearInterval(chatDrainRef.current);
@@ -174,8 +192,6 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         });
                         break;
 
-                    // ── Streaming events ──────────────────────────────
-
                     case 'input_locked':
                         setInputLocked(true);
                         setInputLockedBy(data.user);
@@ -222,13 +238,15 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
 
                     case 'node_stream_start':
                         setStreamingNodes((prev) => ({ ...prev, [data.node_id]: '' }));
+                        if (nodeQueuesRef.current[data.node_id]) {
+                            nodeQueuesRef.current[data.node_id] = [];
+                        }
                         if (callbacksRef.current.onNodeStreamStart) {
                             callbacksRef.current.onNodeStreamStart(data.node_id, data.node_type);
                         }
                         break;
 
                     case 'node_stream_delta':
-                        // Queue characters for smooth node typewriter effect
                         if (!nodeQueuesRef.current[data.node_id]) {
                             nodeQueuesRef.current[data.node_id] = [];
                         }
@@ -240,6 +258,14 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         break;
 
                     case 'node_stream_done': {
+                        // clear the interval immediately
+                        if (nodeDrainRef.current[data.node_id]) {
+                            clearInterval(nodeDrainRef.current[data.node_id]);
+                            delete nodeDrainRef.current[data.node_id];
+                        }
+                        // clear the queue
+                        delete nodeQueuesRef.current[data.node_id];
+
                         setStreamingNodes((prev) => {
                             const next = { ...prev };
                             delete next[data.node_id];
@@ -252,8 +278,8 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                     }
 
                     case 'ai_stream_delta':
-                        // Queue characters for smooth typewriter effect
                         chatQueueRef.current.push(...data.content.split(''));
+                        if (isServerStreamDoneRef.current) isServerStreamDoneRef.current = false;
                         startChatDrain();
                         if (callbacksRef.current.onAiStreamDelta) {
                             callbacksRef.current.onAiStreamDelta(data.content);
@@ -261,21 +287,10 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         break;
 
                     case 'ai_stream_done':
-                        // Flush any remaining buffered text, then clear
-                        flushAllQueues();
-                        // Use a microtask to ensure flush renders before clearing
-                        setTimeout(() => {
-                            setStreamingMessage('');
-                            setStreamingNodes({});
-                            chatQueueRef.current = [];
-                            nodeQueuesRef.current = {};
-                        }, 50);
-                        if (callbacksRef.current.onAiStreamDone) {
-                            callbacksRef.current.onAiStreamDone(data.message);
-                        }
+                        isServerStreamDoneRef.current = true;
+                        finalAiMessageRef.current = data.message;
+                        startChatDrain();
                         break;
-
-                    // ── Legacy events ─────────────────────────────────
 
                     case 'typing':
                         setTypingUser(data.user);

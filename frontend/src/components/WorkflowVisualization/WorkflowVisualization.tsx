@@ -35,47 +35,6 @@ function extractNodeMap(data: string | null): Map<string, NodeSnapshot> {
     }
 }
 
-type NodeEffect = 'added' | 'updated' | 'removed';
-
-function diffNodes(
-    prevMap: Map<string, NodeSnapshot>,
-    newMap: Map<string, NodeSnapshot>,
-): Record<string, NodeEffect> {
-    const effects: Record<string, NodeEffect> = {};
-    newMap.forEach((data, id) => {
-        const prev = prevMap.get(id);
-        if (!prev) {
-            effects[id] = 'added';
-        } else if (prev.label !== data.label || prev.type !== data.type) {
-            effects[id] = 'updated';
-        }
-    });
-    prevMap.forEach((_, id) => {
-        if (!newMap.has(id)) {
-            effects[id] = 'removed';
-        }
-    });
-    return effects;
-}
-
-const EFFECT_CLASS_MAP: Record<NodeEffect, string | undefined> = {
-    added: styles.nodeAdded,
-    updated: styles.nodeUpdated,
-    removed: styles.nodeRemoved,
-};
-
-function applyEffectToNode(node: Node, effect: NodeEffect | undefined): Node {
-    if (!effect) return node;
-    const cls = EFFECT_CLASS_MAP[effect];
-    if (!cls) return node;
-
-    if (effect === 'added' || effect === 'removed') {
-        const { opacity, transition, transform, ...restStyle } = (node.style || {}) as Record<string, any>;
-        return { ...node, className: cls, style: { ...restStyle, transition: 'none' } };
-    }
-    return { ...node, className: cls };
-}
-
 // ── Component ────────────────────────────────────────────────
 
 export default function WorkflowVisualization({
@@ -91,16 +50,12 @@ export default function WorkflowVisualization({
     const lastSavedDataRef = useRef<string | null>(null);
     const isRemoteRef = useRef(isRemoteUpdate);
     isRemoteRef.current = isRemoteUpdate;
-    const animationRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const effectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const prevWorkflowDataRef = useRef<string | null>(null);
-    const justSwitchedChatRef = useRef(false);
     const prevChatIdRef = useRef<number | null>(null);
     useEffect(() => {
         if (chatId !== prevChatIdRef.current) {
             prevChatIdRef.current = chatId;
-            justSwitchedChatRef.current = true;
         }
     }, [chatId]);
 
@@ -113,7 +68,7 @@ export default function WorkflowVisualization({
             const adjacencyMap = new Map<string, string[]>();
             workflow.edges.forEach((edge: any) => {
                 if (!adjacencyMap.has(edge.from))
-                  adjacencyMap.set(edge.from, []);
+                    adjacencyMap.set(edge.from, []);
                 adjacencyMap.get(edge.from)!.push(edge.to);
             });
 
@@ -223,7 +178,7 @@ export default function WorkflowVisualization({
                 if (isLocked) {
                     labelContent = `\uD83D\uDD12 ${displayLabel} (${lockedNodes[node.id].username})`;
                 }
-                if (displayDescription && !isStreamingNode) {
+                if (displayDescription) {
                     labelContent = `${displayLabel}\n${displayDescription}`;
                     if (isLocked) {
                         labelContent = `\uD83D\uDD12 ${displayLabel} (${lockedNodes[node.id].username})\n${displayDescription}`;
@@ -232,7 +187,6 @@ export default function WorkflowVisualization({
 
                 const getNodeBackground = () => {
                     if (isLocked) return '#6b7280';
-                    if (isStreamingNode) return undefined;
                     switch (node.type) {
                         case 'start': return '#FC005C';
                         case 'end': return '#667eea';
@@ -243,7 +197,6 @@ export default function WorkflowVisualization({
 
                 const getNodeBorder = () => {
                     if (isLocked) return '2px solid #ef4444';
-                    if (isStreamingNode) return '2px solid #667eea';
                     return 'none';
                 };
 
@@ -253,7 +206,6 @@ export default function WorkflowVisualization({
                     data: { label: labelContent },
                     position,
                     draggable: !isLocked,
-                    className: isStreamingNode ? styles.streamingNode : undefined,
                     style: {
                         background: getNodeBackground(),
                         color: 'white',
@@ -265,9 +217,6 @@ export default function WorkflowVisualization({
                         minWidth: '150px',
                         textAlign: 'center' as const,
                         opacity: isLocked ? 0.7 : 1,
-                        boxShadow: isStreamingNode
-                            ? '0 0 15px rgba(102, 126, 234, 0.5)'
-                            : undefined,
                         transition: 'all 0.3s ease',
                         whiteSpace: 'pre-wrap' as const,
                     },
@@ -315,7 +264,7 @@ export default function WorkflowVisualization({
                     const updated = updatedNodes.find((n) => n.id === current.id);
                     if (!updated) return current;
                     if (streamingNodeIds.includes(current.id)) {
-                        return { ...current, data: updated.data, style: updated.style, className: updated.className };
+                        return { ...current, data: updated.data, style: updated.style };
                     }
                     return current;
                 })
@@ -323,160 +272,32 @@ export default function WorkflowVisualization({
         }
     }, [streamingNodes]);
 
-    // ── Main animation / diff effect ─────────────────────────
+    // Simplified update effect
     useEffect(() => {
-        if (animationRef.current) {
-            clearInterval(animationRef.current);
-            animationRef.current = null;
-        }
-        if (effectTimeoutRef.current) {
-            clearTimeout(effectTimeoutRef.current);
-            effectTimeoutRef.current = null;
-        }
-
-        const prevData = prevWorkflowDataRef.current;
-        prevWorkflowDataRef.current = workflowData;
-
-        const prevMap = extractNodeMap(prevData);
-        const newMap = extractNodeMap(workflowData);
         const { nodes: newNodes, edges: newEdges } = parseWorkflow(workflowData);
 
-        const isFirstCreation = prevMap.size === 0 && newMap.size > 0 && !justSwitchedChatRef.current;
-        justSwitchedChatRef.current = false;
+        setNodes((currentNodes) => {
+            if (currentNodes.length !== newNodes.length) return newNodes;
 
-        let startTimer: ReturnType<typeof setTimeout> | null = null;
+            return currentNodes.map((current) => {
+                const updated = newNodes.find(n => n.id === current.id);
+                if (!updated) return current;
 
-        if (isFirstCreation && newNodes.length > 1) {
-            const hiddenNodes = newNodes.map((n) => ({
-                ...n,
-                style: { ...n.style, opacity: 0, transition: 'opacity 0.3s ease-out' },
-            }));
-            setNodes(hiddenNodes);
-            setEdges([]);
+                const hasChanged =
+                    current.position.x !== updated.position.x ||
+                    current.position.y !== updated.position.y ||
+                    current.data.label !== updated.data.label ||
+                    JSON.stringify(current.style) !== JSON.stringify(updated.style) ||
+                    current.draggable !== updated.draggable;
 
-            let visibleCount = 0;
-            const revealNext = () => {
-                visibleCount++;
-                const updatedNodes = newNodes.map((n, idx) => ({
-                    ...n,
-                    style: {
-                        ...n.style,
-                        opacity: idx < visibleCount
-                            ? (typeof n.style?.opacity === 'number' ? n.style.opacity : 1)
-                            : 0,
-                        transition: 'opacity 0.3s ease-out',
-                    },
-                }));
-                const visibleNodeIds = new Set(newNodes.slice(0, visibleCount).map((n) => n.id));
-                const visibleEdges = newEdges.filter(
-                    (e) => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target),
-                );
-                setNodes(updatedNodes);
-                setEdges(visibleEdges);
-                if (visibleCount >= newNodes.length && animationRef.current) {
-                    clearInterval(animationRef.current);
-                    animationRef.current = null;
-                }
-            };
+                return hasChanged ? updated : current;
+            });
+        });
+        setEdges(newEdges);
 
-            startTimer = setTimeout(() => {
-                revealNext();
-                if (newNodes.length > 1) {
-                    animationRef.current = setInterval(revealNext, 150);
-                }
-            }, 100);
-        } else {
-            const effects = diffNodes(prevMap, newMap);
-            const removedIds = Object.entries(effects)
-                .filter(([, e]) => e === 'removed')
-                .map(([id]) => id);
-            const hasVisualEffects = Object.keys(effects).length > 0;
-
-            if (removedIds.length > 0) {
-                setNodes((prev) => prev.map((n) =>
-                    removedIds.includes(n.id)
-                        ? applyEffectToNode(n, 'removed')
-                        : n
-                ));
-                setEdges((prev) => prev.filter(
-                    (e) => !removedIds.includes(e.source) && !removedIds.includes(e.target)
-                ));
-
-                startTimer = setTimeout(() => {
-                    const effectNodes = newNodes.map((n) =>
-                        effects[n.id] ? applyEffectToNode(n, effects[n.id]) : n
-                    );
-                    setNodes(effectNodes);
-                    setEdges(newEdges);
-
-                    effectTimeoutRef.current = setTimeout(() => {
-                        setNodes((prev) => prev.map((n) => ({
-                            ...n,
-                            className: streamingNodes[n.id] !== undefined ? styles.streamingNode : undefined,
-                        })));
-                    }, 1200);
-                }, 500);
-            } else {
-                setNodes((currentNodes) => {
-                    if (currentNodes.length !== newNodes.length) {
-                        return newNodes.map((n) =>
-                            effects[n.id] ? applyEffectToNode(n, effects[n.id]) : n
-                        );
-                    }
-                    return currentNodes.map((current) => {
-                        const updated = newNodes.find((n) => n.id === current.id);
-                        if (!updated) return current;
-
-                        const effect = effects[current.id];
-                        const target = effect ? applyEffectToNode(updated, effect) : updated;
-                        const posChanged = current.position.x !== target.position.x || current.position.y !== target.position.y;
-                        const labelChanged = current.data?.label !== target.data?.label;
-                        const styleChanged =
-                            current.style?.opacity !== target.style?.opacity ||
-                            current.style?.background !== target.style?.background ||
-                            current.style?.border !== target.style?.border ||
-                            current.style?.boxShadow !== target.style?.boxShadow;
-                        const classChanged = current.className !== target.className;
-                        const draggableChanged = current.draggable !== target.draggable;
-                        if (!posChanged && !labelChanged && !styleChanged && !classChanged && !draggableChanged) {
-                            return current;
-                        }
-                        return target;
-                    });
-                });
-                setEdges(newEdges);
-
-                if (hasVisualEffects) {
-                    effectTimeoutRef.current = setTimeout(() => {
-                        setNodes((prev) => prev.map((n) => {
-                            if (effects[n.id]) {
-                                return {
-                                    ...n,
-                                    className: streamingNodes[n.id] !== undefined ? styles.streamingNode : undefined,
-                                };
-                            }
-                            return n;
-                        }));
-                    }, 1200);
-                }
-            }
-        }
-
-        return () => {
-            if (startTimer) clearTimeout(startTimer);
-            if (animationRef.current) {
-                clearInterval(animationRef.current);
-                animationRef.current = null;
-            }
-        };
     }, [workflowData, parseWorkflow, setNodes, setEdges]);
 
-    useEffect(() => {
-        return () => {
-            if (animationRef.current) clearInterval(animationRef.current);
-            if (effectTimeoutRef.current) clearTimeout(effectTimeoutRef.current);
-        };
-    }, []);
+    // Removed cleanup effect for animations
 
     const handleNodesChange = useCallback((changes: NodeChange[]) => {
         onNodesChange(changes);
@@ -485,50 +306,50 @@ export default function WorkflowVisualization({
             (c) => c.type === 'position' && c.dragging === true
         );
         if (dragStart && "id" in dragStart && onNodeDragStart)
-          onNodeDragStart(dragStart.id);
-        
+            onNodeDragStart(dragStart.id);
+
         const hasDragStop = changes.some(
-          (change) => change.type === "position" && change.dragging === false,
+            (change) => change.type === "position" && change.dragging === false,
         );
 
         if (hasDragStop) {
-          const dragStopChange = changes.find(
-            (c) => c.type === "position" && c.dragging === false,
-          );
-          const dragStopNodeId =
-            dragStopChange && "id" in dragStopChange ? dragStopChange.id : null;
+            const dragStopChange = changes.find(
+                (c) => c.type === "position" && c.dragging === false,
+            );
+            const dragStopNodeId =
+                dragStopChange && "id" in dragStopChange ? dragStopChange.id : null;
 
-          if (isRemoteRef.current) {
-            if (dragStopNodeId && onNodeDragStop) onNodeDragStop(dragStopNodeId);
-            return;
-          }
+            if (isRemoteRef.current) {
+                if (dragStopNodeId && onNodeDragStop) onNodeDragStop(dragStopNodeId);
+                return;
+            }
 
-          if (workflowData) {
-            setTimeout(() => {
-              setNodes((currentNodes) => {
-                try {
-                  const workflow = JSON.parse(workflowData);
-                  const updatedNodes = workflow.nodes.map((node: any) => {
-                    const reactFlowNode = currentNodes.find((n: Node) => n.id === node.id);
-                    return { ...node, position: reactFlowNode?.position || node.position };
-                  });
-                  const updatedWorkflow = { ...workflow, nodes: updatedNodes };
-                  const workflowStr = JSON.stringify(updatedWorkflow);
-                  if (workflowStr !== lastSavedDataRef.current && onPositionChange) {
-                    onPositionChange(workflowStr);
-                    lastSavedDataRef.current = workflowStr;
-                  }
-                  if (dragStopNodeId && onNodeDragStop) onNodeDragStop(dragStopNodeId);
-                } catch (error) {
-                  console.error("Failed to save positions:", error);
-                  if (dragStopNodeId && onNodeDragStop) onNodeDragStop(dragStopNodeId);
-                }
-                return currentNodes;
-              });
-            }, 0);
-          } else {
-            if (dragStopNodeId && onNodeDragStop) onNodeDragStop(dragStopNodeId);
-          }
+            if (workflowData) {
+                setTimeout(() => {
+                    setNodes((currentNodes) => {
+                        try {
+                            const workflow = JSON.parse(workflowData);
+                            const updatedNodes = workflow.nodes.map((node: any) => {
+                                const reactFlowNode = currentNodes.find((n: Node) => n.id === node.id);
+                                return { ...node, position: reactFlowNode?.position || node.position };
+                            });
+                            const updatedWorkflow = { ...workflow, nodes: updatedNodes };
+                            const workflowStr = JSON.stringify(updatedWorkflow);
+                            if (workflowStr !== lastSavedDataRef.current && onPositionChange) {
+                                onPositionChange(workflowStr);
+                                lastSavedDataRef.current = workflowStr;
+                            }
+                            if (dragStopNodeId && onNodeDragStop) onNodeDragStop(dragStopNodeId);
+                        } catch (error) {
+                            console.error("Failed to save positions:", error);
+                            if (dragStopNodeId && onNodeDragStop) onNodeDragStop(dragStopNodeId);
+                        }
+                        return currentNodes;
+                    });
+                }, 0);
+            } else {
+                if (dragStopNodeId && onNodeDragStop) onNodeDragStop(dragStopNodeId);
+            }
         }
     }, [onNodesChange, workflowData, setNodes, onPositionChange, onNodeDragStart, onNodeDragStop]);
 
