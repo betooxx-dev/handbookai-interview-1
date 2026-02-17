@@ -25,6 +25,7 @@ export default function WorkflowVisualization({
     onNodeDragStart,
     onNodeDragStop,
     isRemoteUpdate = false,
+    streamingNodes = {},
 }: WorkflowVisualizationProps) {
     const lastSavedDataRef = useRef<string | null>(null);
     const isRemoteRef = useRef(isRemoteUpdate);
@@ -48,7 +49,6 @@ export default function WorkflowVisualization({
             const incomingEdges = new Map<string, string[]>();
             workflow.edges.forEach((edge: any) => {
                 if (!incomingEdges.has(edge.to)) incomingEdges.set(edge.to, []);
-                
                 incomingEdges.get(edge.to)!.push(edge.from);
             });
 
@@ -59,7 +59,7 @@ export default function WorkflowVisualization({
 
             const positions = new Map<string, { x: number; y: number }>();
             const visited = new Set<string>();
-            let currentY = 100;
+            const currentY = 100;
             const verticalSpacing = 180;
             const horizontalSpacing = 350;
             const centerX = 400;
@@ -128,33 +128,71 @@ export default function WorkflowVisualization({
             const nodes: Node[] = connectedNodes.map((node: any) => {
                 const position = positions.get(node.id) || { x: centerX, y: 100 };
                 const isLocked = lockedNodes[node.id] !== undefined;
+                const isStreamingNode = streamingNodes[node.id] !== undefined;
+
+                // For streaming nodes, display the accumulated plain text directly
+                let displayLabel = node.label;
+                let displayDescription = node.description || '';
+                if (isStreamingNode) {
+                    const accumulated = streamingNodes[node.id];
+                    if (accumulated.trim()) {
+                        displayLabel = accumulated.trim();
+                    }
+                }
+
+                let labelContent = displayLabel;
+                if (isLocked) {
+                    labelContent = `\uD83D\uDD12 ${displayLabel} (${lockedNodes[node.id].username})`;
+                }
+                if (displayDescription && !isStreamingNode) {
+                    labelContent = `${displayLabel}\n${displayDescription}`;
+                    if (isLocked) {
+                        labelContent = `\uD83D\uDD12 ${displayLabel} (${lockedNodes[node.id].username})\n${displayDescription}`;
+                    }
+                }
+
+                const getNodeBackground = () => {
+                    if (isLocked) return '#6b7280';
+                    if (isStreamingNode) return undefined;
+                    switch (node.type) {
+                        case 'start': return '#FC005C';
+                        case 'end': return '#667eea';
+                        case 'decision': return '#f6ad55';
+                        default: return '#48bb78';
+                    }
+                };
+
+                const getNodeBorder = () => {
+                    if (isLocked) return '2px solid #ef4444';
+                    if (isStreamingNode) return '2px solid #667eea';
+                    return 'none';
+                };
 
                 return {
                     id: node.id,
                     type: 'default',
                     data: {
-                        label: isLocked
-                            ? `🔒 ${node.label} (${lockedNodes[node.id].username})`
-                            : node.label,
+                        label: labelContent,
                     },
                     position,
                     draggable: !isLocked,
+                    className: isStreamingNode ? styles.streamingNode : undefined,
                     style: {
-                        background: isLocked
-                            ? '#6b7280'
-                            : node.type === 'start' ? '#FC005C'
-                                : node.type === 'end' ? '#667eea'
-                                    : node.type === 'decision' ? '#f6ad55'
-                                        : '#48bb78',
+                        background: getNodeBackground(),
                         color: 'white',
                         padding: '10px 20px',
                         borderRadius: node.type === 'decision' ? '8px' : '50px',
                         fontSize: '14px',
                         fontWeight: '500',
-                        border: isLocked ? '2px solid #ef4444' : 'none',
+                        border: getNodeBorder(),
                         minWidth: '150px',
-                        textAlign: 'center',
+                        textAlign: 'center' as const,
                         opacity: isLocked ? 0.7 : 1,
+                        boxShadow: isStreamingNode
+                            ? '0 0 15px rgba(102, 126, 234, 0.5)'
+                            : undefined,
+                        transition: 'all 0.3s ease',
+                        whiteSpace: 'pre-wrap' as const,
                     },
                 };
             });
@@ -181,7 +219,7 @@ export default function WorkflowVisualization({
             console.error('Failed to parse workflow:', error);
             return { nodes: [], edges: [] };
         }
-    }, [lockedNodes]);
+    }, [lockedNodes, streamingNodes]);
 
     const { nodes: initialNodes, edges: initialEdges } = useMemo(
         () => parseWorkflow(workflowData),
@@ -203,6 +241,24 @@ export default function WorkflowVisualization({
             return '';
         }
     }, []);
+
+    // Re-parse when streaming nodes change
+    useEffect(() => {
+        const streamingNodeIds = Object.keys(streamingNodes);
+        if (streamingNodeIds.length > 0) {
+            const { nodes: updatedNodes } = parseWorkflow(workflowData);
+            setNodes((currentNodes) => {
+                return currentNodes.map((current) => {
+                    const updated = updatedNodes.find((n) => n.id === current.id);
+                    if (!updated) return current;
+                    if (streamingNodeIds.includes(current.id)) {
+                        return { ...current, data: updated.data, style: updated.style, className: updated.className };
+                    }
+                    return current;
+                });
+            });
+        }
+    }, [streamingNodes]);
 
     useEffect(() => {
       if (animationRef.current) {
@@ -287,13 +343,16 @@ export default function WorkflowVisualization({
             const styleChanged =
               current.style?.opacity !== updated.style?.opacity ||
               current.style?.background !== updated.style?.background ||
-              current.style?.border !== updated.style?.border;
+              current.style?.border !== updated.style?.border ||
+              current.style?.boxShadow !== updated.style?.boxShadow;
             const draggableChanged = current.draggable !== updated.draggable;
+            const classChanged = current.className !== updated.className;
             if (
               !posChanged &&
               !labelChanged &&
               !styleChanged &&
-              !draggableChanged
+              !draggableChanged &&
+              !classChanged
             ) {
               return current;
             }
@@ -437,7 +496,7 @@ export default function WorkflowVisualization({
                     maxZoom={4}
                     nodesDraggable={true}
                     nodesConnectable={false}
-                    elementsSelectable={true}
+                    elementsSelectable={false}
                     fitViewOptions={{ padding: 0.3 }}
                 >
                     <Controls />

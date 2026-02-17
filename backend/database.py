@@ -31,5 +31,5 @@ def get_db():
 
 def init_db():
     from models import user, chat, message, chat_member, collaboration_session  # noqa: F401
-    Base.metadata.drop_all(bind=engine)
+    # Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)

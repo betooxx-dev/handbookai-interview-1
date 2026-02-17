@@ -40,3 +40,18 @@
   flex: 1;
   height: 100%;
 }
+
+/* Streaming node animation */
+.streamingNode {
+  animation: nodePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes nodePulse {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(102, 126, 234, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(102, 126, 234, 0.8);
+  }
+}
+

@@ -251,3 +251,153 @@
   opacity: 0.3;
   cursor: not-allowed;
 }
+
+/* Streaming AI message */
+.streamingContent {
+  position: relative;
+}
+
+.streamCursor {
+  animation: blink 1s infinite;
+  font-weight: 300;
+  color: #999;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* Input locked banner */
+.inputLockedBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+  border: 1px solid #ffcc80;
+  border-radius: 20px;
+  font-size: 12px;
+  color: #e65100;
+  font-weight: 500;
+  animation: fadeIn 0.2s ease-in;
+}
+
+.inputLockedBanner .typingDots span {
+  background: #e65100;
+}
+
+/* Node selector */
+.nodeSelector {
+  position: relative;
+}
+
+.nodeSelectorToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #555;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.nodeSelectorToggle:hover {
+  border-color: #FC005C;
+  color: #333;
+}
+
+.nodeSelectorIcon {
+  font-weight: 500;
+}
+
+.nodeSelectorArrow {
+  font-size: 10px;
+  color: #999;
+}
+
+.nodeSelectorDropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 4px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 20;
+  animation: fadeIn 0.15s ease-in;
+}
+
+.nodeSelectorItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #333;
+  transition: background 0.15s;
+}
+
+.nodeSelectorItem:hover {
+  background: #f8f8f8;
+}
+
+.nodeSelectorItem input[type="checkbox"] {
+  accent-color: #FC005C;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.nodeSelectorAll {
+  font-weight: 600;
+  color: #222;
+}
+
+.nodeSelectorDivider {
+  height: 1px;
+  background: #eee;
+  margin: 0 8px;
+}
+
+.nodeSelectorLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeTypeDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot_start {
+  background: #FC005C;
+}
+
+.dot_process {
+  background: #48bb78;
+}
+
+.dot_decision {
+  background: #f6ad55;
+}
+
+.dot_end {
+  background: #667eea;
+}

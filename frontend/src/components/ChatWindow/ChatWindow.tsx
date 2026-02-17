@@ -1,9 +1,29 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { ChatService } from '@/services/chat.service';
 import { Message, ChatWindowProps } from "@/types";
 import styles from './styles.module.css';
+
+interface WorkflowNode {
+    id: string;
+    label: string;
+    type: string;
+}
+
+function parseNodes(workflowData: string | null | undefined): WorkflowNode[] {
+    if (!workflowData) return [];
+    try {
+        const wf = JSON.parse(workflowData);
+        return (wf.nodes || []).map((n: any) => ({
+            id: n.id,
+            label: n.label || 'Node',
+            type: n.type || 'process',
+        }));
+    } catch {
+        return [];
+    }
+}
 
 export default function ChatWindow({
     chatId,
@@ -14,14 +34,25 @@ export default function ChatWindow({
     remoteMessages,
     typingUser,
     onTyping,
+    inputLocked = false,
+    inputLockedBy,
+    streamingMessage,
+    workflowData,
 }: ChatWindowProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
+    const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+    const [selectorOpen, setSelectorOpen] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const typingDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
-    const isInputBlocked = !!typingUser;
+    const isInputBlocked = inputLocked || !!typingUser;
+    const isStreaming = !!streamingMessage;
+
+    const availableNodes = useMemo(() => parseNodes(workflowData), [workflowData]);
+    const hasWorkflow = availableNodes.length > 0;
+    const allSelected = hasWorkflow && selectedNodeIds.length === availableNodes.length;
 
     useEffect(() => {
         if (chatId) {
@@ -30,6 +61,8 @@ export default function ChatWindow({
             setMessages([]);
             onWorkflowUpdate(null);
         }
+        setSelectedNodeIds([]);
+        setSelectorOpen(false);
     }, [chatId]);
 
     useEffect(() => {
@@ -38,14 +71,25 @@ export default function ChatWindow({
                 const existingIds = new Set(prev.map((m) => m.id));
                 const newMsgs = remoteMessages.filter((m) => !existingIds.has(m.id));
                 if (newMsgs.length === 0) return prev;
-                return [...prev, ...newMsgs];
+                return [...prev, ...newMsgs].sort(
+                    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                );
             });
         }
     }, [remoteMessages]);
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages]);
+    }, [messages, streamingMessage]);
+
+    // Reset selection when workflow changes (nodes may have changed)
+    useEffect(() => {
+        setSelectedNodeIds((prev) => {
+            const validIds = new Set(availableNodes.map((n) => n.id));
+            const filtered = prev.filter((id) => validIds.has(id));
+            return filtered.length !== prev.length ? filtered : prev;
+        });
+    }, [availableNodes]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -53,11 +97,9 @@ export default function ChatWindow({
 
     const loadMessages = async () => {
         if (!chatId) return;
-
         try {
             const chat = await ChatService.getChat(chatId);
             setMessages(chat.messages);
-
             const lastWorkflow = [...chat.messages]
                 .reverse()
                 .find((msg) => msg.role === 'assistant' && msg.workflow_data);
@@ -69,7 +111,6 @@ export default function ChatWindow({
 
     const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInput(e.target.value);
-
         if (isCollaborating && onTyping && e.target.value.trim()) {
             if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current);
             typingDebounceRef.current = setTimeout(() => {
@@ -78,8 +119,27 @@ export default function ChatWindow({
         }
     };
 
+    const toggleNode = (nodeId: string) => {
+        setSelectedNodeIds((prev) =>
+            prev.includes(nodeId)
+                ? prev.filter((id) => id !== nodeId)
+                : [...prev, nodeId]
+        );
+    };
+
+    const toggleAll = () => {
+        if (allSelected) {
+            setSelectedNodeIds([]);
+        } else {
+            setSelectedNodeIds(availableNodes.map((n) => n.id));
+        }
+    };
+
+    const needsNodeSelection = isCollaborating && hasWorkflow && selectedNodeIds.length === 0;
+
     const handleSend = async () => {
         if (!input.trim() || !chatId || loading || isInputBlocked) return;
+        if (needsNodeSelection) return;
 
         const userMessage = input;
         setInput('');
@@ -93,7 +153,9 @@ export default function ChatWindow({
                 created_at: new Date().toISOString(),
             };
             setMessages((prev) => [...prev, tempUserMessage]);
-            onSendCollabMessage(userMessage);
+            onSendCollabMessage(userMessage, selectedNodeIds.length > 0 ? selectedNodeIds : undefined);
+            setSelectedNodeIds([]);
+            setSelectorOpen(false);
             return;
         }
 
@@ -113,16 +175,18 @@ export default function ChatWindow({
             await loadMessages();
 
             if (response.workflow_data)
-              onWorkflowUpdate(response.workflow_data, response.id);
+                onWorkflowUpdate(response.workflow_data, response.id);
 
             if (response.chat_title && onTitleUpdate)
-              onTitleUpdate(chatId, response.chat_title);
-            
+                onTitleUpdate(chatId, response.chat_title);
+
         } catch (error) {
             console.error('Failed to send message:', error);
             setMessages((prev) => prev.filter((msg) => msg.id !== tempUserMessage.id));
         } finally {
             setLoading(false);
+            setSelectedNodeIds([]);
+            setSelectorOpen(false);
         }
     };
 
@@ -154,6 +218,22 @@ export default function ChatWindow({
         }
     };
 
+    const getInputPlaceholder = (): string => {
+        if (inputLocked && inputLockedBy) {
+            return `${inputLockedBy.username} is waiting for AI response...`;
+        }
+        if (isInputBlocked && typingUser) {
+            return `${typingUser.username} is typing...`;
+        }
+        if (needsNodeSelection) {
+            return "Select which nodes to modify before sending...";
+        }
+        if (selectedNodeIds.length > 0) {
+            return `${selectedNodeIds.length} node(s) selected — describe what to change...`;
+        }
+        return "Describe the workflow you need...";
+    };
+
     if (!chatId) {
         return (
             <div className={styles.container}>
@@ -182,7 +262,29 @@ export default function ChatWindow({
                         </div>
                     </div>
                 ))}
-                {loading && (
+                {/* Streaming AI message bubble */}
+                {isStreaming && (
+                    <div className={`${styles.message} ${styles.assistantMessage}`}>
+                        <div className={`${styles.messageContent} ${styles.streamingContent}`}>
+                            {streamingMessage}
+                            <span className={styles.streamCursor}>|</span>
+                        </div>
+                    </div>
+                )}
+                {/* Loading dots (non-streaming fallback) */}
+                {loading && !isStreaming && (
+                    <div className={`${styles.message} ${styles.assistantMessage}`}>
+                        <div className={styles.messageContent}>
+                            <div className={styles.typing}>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                {/* Input locked indicator (streaming in progress) */}
+                {inputLocked && !isStreaming && !loading && (
                     <div className={`${styles.message} ${styles.assistantMessage}`}>
                         <div className={styles.messageContent}>
                             <div className={styles.typing}>
@@ -197,7 +299,64 @@ export default function ChatWindow({
             </div>
 
             <div className={styles.inputArea}>
-                {typingUser && (
+                {/* Node selector */}
+                {hasWorkflow && !isInputBlocked && (
+                    <div className={styles.nodeSelector}>
+                        <button
+                            type="button"
+                            className={styles.nodeSelectorToggle}
+                            onClick={() => setSelectorOpen((v) => !v)}
+                        >
+                            <span className={styles.nodeSelectorIcon}>
+                                {selectedNodeIds.length > 0 ? (
+                                    <>{selectedNodeIds.length} node{selectedNodeIds.length > 1 ? 's' : ''} selected</>
+                                ) : (
+                                    <>Select nodes to modify</>
+                                )}
+                            </span>
+                            <span className={styles.nodeSelectorArrow}>{selectorOpen ? '\u25B2' : '\u25BC'}</span>
+                        </button>
+                        {selectorOpen && (
+                            <div className={styles.nodeSelectorDropdown}>
+                                <label className={`${styles.nodeSelectorItem} ${styles.nodeSelectorAll}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={allSelected}
+                                        onChange={toggleAll}
+                                    />
+                                    <span>All nodes</span>
+                                </label>
+                                <div className={styles.nodeSelectorDivider} />
+                                {availableNodes.map((node) => (
+                                    <label key={node.id} className={styles.nodeSelectorItem}>
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedNodeIds.includes(node.id)}
+                                            onChange={() => toggleNode(node.id)}
+                                        />
+                                        <span className={styles.nodeSelectorLabel}>
+                                            <span className={`${styles.nodeTypeDot} ${styles[`dot_${node.type}`]}`} />
+                                            {node.label}
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+                {/* Input locked banner */}
+                {inputLocked && inputLockedBy && (
+                    <div className={styles.inputLockedBanner}>
+                        <div className={styles.typingDots}>
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                        <span>{inputLockedBy.username} is waiting for AI response...</span>
+                    </div>
+                )}
+                {/* Typing indicator (legacy) */}
+                {typingUser && !inputLocked && (
                     <div className={styles.typingIndicator}>
                         <div className={styles.typingDots}>
                             <span></span>
@@ -214,13 +373,13 @@ export default function ChatWindow({
                         disabled={loading || messages.length < 2 || isInputBlocked}
                         title="Undo last change"
                     >
-                        ↶ Undo
+                        &#8630; Undo
                     </button>
                     <textarea
                         value={input}
                         onChange={handleInputChange}
                         onKeyPress={handleKeyPress}
-                        placeholder={isInputBlocked ? `${typingUser?.username} is typing...` : "Describe the workflow you need..."}
+                        placeholder={getInputPlaceholder()}
                         className={`${styles.input} ${isInputBlocked ? styles.inputBlocked : ''}`}
                         rows={3}
                         disabled={loading || isInputBlocked}
@@ -228,7 +387,7 @@ export default function ChatWindow({
                     <button
                         onClick={handleSend}
                         className={styles.sendButton}
-                        disabled={loading || !input.trim() || isInputBlocked}
+                        disabled={loading || !input.trim() || isInputBlocked || needsNodeSelection}
                     >
                         Send
                     </button>

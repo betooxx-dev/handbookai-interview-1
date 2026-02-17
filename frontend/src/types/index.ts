@@ -64,29 +64,23 @@ export interface LockedNode {
     username: string;
 }
 
-export interface WorkflowVisualizationProps {
-    workflowData: string | null;
-    chatId: number | null;
-    onPositionChange?: (workflowData: string) => void;
-    lockedNodes?: Record<string, LockedNode>;
-    onNodeDragStart?: (nodeId: string) => void;
-    onNodeDragStop?: (nodeId: string) => void;
-    isRemoteUpdate?: boolean;
-}
-
 export interface UseCollaborationReturn {
     sessionCode: string | null;
     users: CollabUser[];
     lockedNodes: Record<string, LockedNode>;
     isConnected: boolean;
     typingUser: CollabUser | null;
+    inputLocked: boolean;
+    inputLockedBy: { id: number; username: string } | null;
+    streamingMessage: string;
+    streamingNodes: Record<string, string>;
     createSession: (chatId: number) => Promise<void>;
     joinSession: (code: string) => Promise<void>;
     leaveSession: () => void;
     sendWorkflowUpdate: (workflowData: string) => void;
     lockNode: (nodeId: string) => void;
     unlockNode: (nodeId: string) => void;
-    sendChatMessage: (content: string) => void;
+    sendChatMessage: (content: string, selectedNodeIds?: string[]) => void;
     sendTyping: () => void;
     kickUser: (userId: number) => void;
 }
@@ -99,6 +93,15 @@ export interface CollaborationCallbacks {
     onConnectedToChat?: (chatId: number) => void;
     onTitleUpdate?: (chatId: number, title: string) => void;
     onMemberAdded?: (chatId: number) => void;
+    onInputLocked?: (user: { id: number; username: string }) => void;
+    onInputUnlocked?: () => void;
+    onNodesLocked?: (nodeIds: string[], user: { id: number; username: string }) => void;
+    onNodesUnlocked?: (nodeIds: string[]) => void;
+    onNodeStreamStart?: (nodeId: string) => void;
+    onNodeStreamDelta?: (nodeId: string, content: string) => void;
+    onNodeStreamDone?: (nodeId: string, data: any) => void;
+    onAiStreamDelta?: (content: string) => void;
+    onAiStreamDone?: (message: any) => void;
 }
 
 export interface ChatListProps {
@@ -113,8 +116,23 @@ export interface ChatWindowProps {
     onWorkflowUpdate: (workflowData: string | null, messageId?: number) => void;
     onTitleUpdate?: (chatId: number, title: string) => void;
     isCollaborating?: boolean;
-    onSendCollabMessage?: (content: string) => void;
+    onSendCollabMessage?: (content: string, selectedNodeIds?: string[]) => void;
     remoteMessages?: Message[];
     typingUser?: CollabUser | null;
     onTyping?: () => void;
+    inputLocked?: boolean;
+    inputLockedBy?: { id: number; username: string } | null;
+    streamingMessage?: string;
+    workflowData?: string | null;
+}
+
+export interface WorkflowVisualizationProps {
+    workflowData: string | null;
+    chatId: number | null;
+    onPositionChange?: (workflowData: string) => void;
+    lockedNodes?: Record<string, LockedNode>;
+    onNodeDragStart?: (nodeId: string) => void;
+    onNodeDragStop?: (nodeId: string) => void;
+    isRemoteUpdate?: boolean;
+    streamingNodes?: Record<string, string>;
 }

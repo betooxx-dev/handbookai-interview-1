@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuthStore } from '@/store/auth.store';
 import { AuthForm, ChatList, ChatWindow, WorkflowVisualization, CollaborationPanel } from '@/components';
 import { ChatService } from '@/services/chat.service';
@@ -25,6 +25,10 @@ export default function Home() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [refreshChatsKey, setRefreshChatsKey] = useState(0);
   const [refreshMembersKey, setRefreshMembersKey] = useState(0);
+
+  // Ref to avoid stale closure in streaming callbacks
+  const workflowDataRef = useRef(workflowData);
+  workflowDataRef.current = workflowData;
 
   const handleWorkflowUpdate = (data: string | null, messageId?: number) => {
     setWorkflowData(data);
@@ -85,6 +89,48 @@ export default function Home() {
     onTitleUpdate: handleTitleUpdate,
     onMemberAdded: () => {
       setRefreshMembersKey((k) => k + 1);
+    },
+    // Streaming callbacks — use functional setState to avoid stale closures
+    onNodeStreamDone: (nodeId, nodeData) => {
+      setWorkflowData((prev) => {
+        if (!prev) return prev;
+        try {
+          const workflow = JSON.parse(prev);
+          const nodeIndex = workflow.nodes.findIndex((n: any) => n.id === nodeId);
+          if (nodeIndex >= 0) {
+            if (nodeData.label) {
+              workflow.nodes[nodeIndex].label = nodeData.label;
+            }
+            if (nodeData.type) {
+              workflow.nodes[nodeIndex].type = nodeData.type;
+            }
+            if (nodeData.description) {
+              workflow.nodes[nodeIndex].description = nodeData.description;
+            }
+            return JSON.stringify(workflow);
+          }
+        } catch {
+          // Ignore parse errors
+        }
+        return prev;
+      });
+      setIsRemoteUpdate(true);
+      setTimeout(() => setIsRemoteUpdate(false), 100);
+    },
+    onAiStreamDone: (message) => {
+      setRemoteMessages((prev) => [...prev, {
+        id: message.id,
+        chat_id: message.chat_id,
+        role: message.role,
+        content: message.content,
+        workflow_data: message.workflow_data,
+        created_at: new Date().toISOString(),
+      }]);
+      if (message.workflow_data) {
+        setIsRemoteUpdate(true);
+        setWorkflowData(message.workflow_data);
+        setTimeout(() => setIsRemoteUpdate(false), 100);
+      }
     },
   });
 
@@ -218,6 +264,10 @@ export default function Home() {
             remoteMessages={remoteMessages}
             typingUser={collaboration.typingUser}
             onTyping={collaboration.sendTyping}
+            inputLocked={collaboration.inputLocked}
+            inputLockedBy={collaboration.inputLockedBy}
+            streamingMessage={collaboration.streamingMessage}
+            workflowData={workflowData}
           />
         </div>
 
@@ -244,6 +294,7 @@ export default function Home() {
             onNodeDragStart={collaboration.isConnected ? collaboration.lockNode : undefined}
             onNodeDragStop={collaboration.isConnected ? collaboration.unlockNode : undefined}
             isRemoteUpdate={isRemoteUpdate}
+            streamingNodes={collaboration.streamingNodes}
           />
         </div>
       </div>

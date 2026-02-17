@@ -314,6 +314,59 @@ class CollaborationManager:
         for user_id in disconnected:
             await self.leave_session(code, user_id)
 
+    async def broadcast_all(self, code: str, message: dict):
+        """Send a JSON message to ALL connected users (including the sender)."""
+        session = self._sessions.get(code)
+        if not session:
+            return
+
+        disconnected = []
+        for user_id, info in session.connections.items():
+            try:
+                await info["ws"].send_json(message)
+            except Exception:
+                disconnected.append(user_id)
+
+        for user_id in disconnected:
+            await self.leave_session(code, user_id)
+
+    def lock_nodes_for_ai(self, code: str, node_ids: list[str], user_id: int) -> list[str]:
+        """Lock multiple nodes for AI streaming. Returns the list of successfully locked node IDs."""
+        session = self._sessions.get(code)
+        if not session:
+            return []
+
+        locked = []
+        for node_id in node_ids:
+            current_holder = session.locked_nodes.get(node_id)
+            if current_holder is None or current_holder == user_id:
+                session.locked_nodes[node_id] = user_id
+                locked.append(node_id)
+        return locked
+
+    def unlock_nodes_for_ai(self, code: str, node_ids: list[str], user_id: int) -> list[str]:
+        """Unlock multiple nodes after AI streaming. Returns the list of unlocked node IDs."""
+        session = self._sessions.get(code)
+        if not session:
+            return []
+
+        unlocked = []
+        for node_id in node_ids:
+            if session.locked_nodes.get(node_id) == user_id:
+                del session.locked_nodes[node_id]
+                unlocked.append(node_id)
+        return unlocked
+
+    def get_other_users_locked_nodes(self, code: str, user_id: int) -> dict[str, int]:
+        """Get a dict of node_id -> user_id for nodes locked by users OTHER than user_id."""
+        session = self._sessions.get(code)
+        if not session:
+            return {}
+        return {
+            nid: uid for nid, uid in session.locked_nodes.items()
+            if uid != user_id
+        }
+
 
 # Singleton instance
 collaboration_manager = CollaborationManager()

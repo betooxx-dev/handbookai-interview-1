@@ -11,6 +11,10 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
     const [lockedNodes, setLockedNodes] = useState<Record<string, LockedNode>>({});
     const [isConnected, setIsConnected] = useState(false);
     const [typingUser, setTypingUser] = useState<CollabUser | null>(null);
+    const [inputLocked, setInputLocked] = useState(false);
+    const [inputLockedBy, setInputLockedBy] = useState<{ id: number; username: string } | null>(null);
+    const [streamingMessage, setStreamingMessage] = useState('');
+    const [streamingNodes, setStreamingNodes] = useState<Record<string, string>>({});
 
     const wsRef = useRef<WebSocket | null>(null);
     const callbacksRef = useRef(callbacks);
@@ -58,7 +62,6 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         if (data.workflow_data && callbacksRef.current.onRemoteWorkflowUpdate) {
                             callbacksRef.current.onRemoteWorkflowUpdate(data.workflow_data, { id: 0, username: 'session', role: 'owner' });
                         }
-                        // Notify which chat we connected to
                         if (data.chat_id && callbacksRef.current.onConnectedToChat) {
                             callbacksRef.current.onConnectedToChat(data.chat_id);
                         }
@@ -104,6 +107,97 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         });
                         break;
 
+                    // ── Streaming events ──────────────────────────────
+
+                    case 'input_locked':
+                        setInputLocked(true);
+                        setInputLockedBy(data.user);
+                        if (callbacksRef.current.onInputLocked) {
+                            callbacksRef.current.onInputLocked(data.user);
+                        }
+                        break;
+
+                    case 'input_unlocked':
+                        setInputLocked(false);
+                        setInputLockedBy(null);
+                        if (callbacksRef.current.onInputUnlocked) {
+                            callbacksRef.current.onInputUnlocked();
+                        }
+                        break;
+
+                    case 'nodes_locked':
+                        if (data.node_ids && data.user) {
+                            setLockedNodes((prev) => {
+                                const next = { ...prev };
+                                data.node_ids.forEach((nodeId: string) => {
+                                    next[nodeId] = { userId: data.user.id, username: data.user.username };
+                                });
+                                return next;
+                            });
+                            if (callbacksRef.current.onNodesLocked) {
+                                callbacksRef.current.onNodesLocked(data.node_ids, data.user);
+                            }
+                        }
+                        break;
+
+                    case 'nodes_unlocked':
+                        if (data.node_ids) {
+                            setLockedNodes((prev) => {
+                                const next = { ...prev };
+                                data.node_ids.forEach((nodeId: string) => delete next[nodeId]);
+                                return next;
+                            });
+                            if (callbacksRef.current.onNodesUnlocked) {
+                                callbacksRef.current.onNodesUnlocked(data.node_ids);
+                            }
+                        }
+                        break;
+
+                    case 'node_stream_start':
+                        setStreamingNodes((prev) => ({ ...prev, [data.node_id]: '' }));
+                        if (callbacksRef.current.onNodeStreamStart) {
+                            callbacksRef.current.onNodeStreamStart(data.node_id);
+                        }
+                        break;
+
+                    case 'node_stream_delta':
+                        setStreamingNodes((prev) => ({
+                            ...prev,
+                            [data.node_id]: (prev[data.node_id] || '') + data.content,
+                        }));
+                        if (callbacksRef.current.onNodeStreamDelta) {
+                            callbacksRef.current.onNodeStreamDelta(data.node_id, data.content);
+                        }
+                        break;
+
+                    case 'node_stream_done': {
+                        setStreamingNodes((prev) => {
+                            const next = { ...prev };
+                            delete next[data.node_id];
+                            return next;
+                        });
+                        if (callbacksRef.current.onNodeStreamDone) {
+                            callbacksRef.current.onNodeStreamDone(data.node_id, data.data);
+                        }
+                        break;
+                    }
+
+                    case 'ai_stream_delta':
+                        setStreamingMessage((prev) => prev + data.content);
+                        if (callbacksRef.current.onAiStreamDelta) {
+                            callbacksRef.current.onAiStreamDelta(data.content);
+                        }
+                        break;
+
+                    case 'ai_stream_done':
+                        setStreamingMessage('');
+                        if (callbacksRef.current.onAiStreamDone) {
+                            callbacksRef.current.onAiStreamDone(data.message);
+                        }
+                        break;
+
+                    // ── Legacy events ─────────────────────────────────
+
                     case 'typing':
                         setTypingUser(data.user);
                         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -130,6 +224,10 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         setLockedNodes({});
                         setIsConnected(false);
                         setTypingUser(null);
+                        setInputLocked(false);
+                        setInputLockedBy(null);
+                        setStreamingMessage('');
+                        setStreamingNodes({});
                         wsRef.current = null;
                         break;
 
@@ -191,6 +289,10 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
         setLockedNodes({});
         setIsConnected(false);
         setTypingUser(null);
+        setInputLocked(false);
+        setInputLockedBy(null);
+        setStreamingMessage('');
+        setStreamingNodes({});
     }, []);
 
     const sendWorkflowUpdate = useCallback((workflowData: string) => {
@@ -211,9 +313,13 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
         }
     }, []);
 
-    const sendChatMessage = useCallback((content: string) => {
+    const sendChatMessage = useCallback((content: string, selectedNodeIds?: string[]) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: 'chat_message', content }));
+            wsRef.current.send(JSON.stringify({
+                type: 'chat_message',
+                content,
+                selected_node_ids: selectedNodeIds || [],
+            }));
         }
     }, []);
 
@@ -244,6 +350,10 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
         lockedNodes,
         isConnected,
         typingUser,
+        inputLocked,
+        inputLockedBy,
+        streamingMessage,
+        streamingNodes,
         createSession,
         joinSession,
         leaveSession,
