@@ -26,9 +26,10 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
     const chatDrainRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const nodeQueuesRef = useRef<Record<string, string[]>>({});
     const nodeDrainRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+    const nodeStreamsCompleteRef = useRef<Set<string>>(new Set());
 
     const CHAT_CHAR_INTERVAL = 50;
-    const NODE_CHAR_INTERVAL = 700;
+    const NODE_CHAR_INTERVAL = 70;
     const CHARS_PER_TICK = 1;
 
     const isServerStreamDoneRef = useRef(false);
@@ -68,9 +69,20 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
         nodeDrainRef.current[nodeId] = setInterval(() => {
             const queue = nodeQueuesRef.current[nodeId];
             if (!queue || queue.length === 0) {
-                if (nodeDrainRef.current[nodeId]) {
-                    clearInterval(nodeDrainRef.current[nodeId]);
-                    delete nodeDrainRef.current[nodeId];
+                // Only stop if the server has finished sending data
+                if (nodeStreamsCompleteRef.current.has(nodeId)) {
+                    if (nodeDrainRef.current[nodeId]) {
+                        clearInterval(nodeDrainRef.current[nodeId]);
+                        delete nodeDrainRef.current[nodeId];
+                    }
+                    delete nodeQueuesRef.current[nodeId];
+                    nodeStreamsCompleteRef.current.delete(nodeId);
+
+                    setStreamingNodes((prev) => {
+                        const next = { ...prev };
+                        delete next[nodeId];
+                        return next;
+                    });
                 }
                 return;
             }
@@ -237,10 +249,14 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         break;
 
                     case 'node_stream_start':
-                        setStreamingNodes((prev) => ({ ...prev, [data.node_id]: '' }));
-                        if (nodeQueuesRef.current[data.node_id]) {
-                            nodeQueuesRef.current[data.node_id] = [];
+                        if (nodeDrainRef.current[data.node_id]) {
+                            clearInterval(nodeDrainRef.current[data.node_id]);
+                            delete nodeDrainRef.current[data.node_id];
                         }
+                        delete nodeQueuesRef.current[data.node_id];
+                        nodeStreamsCompleteRef.current.delete(data.node_id);
+
+                        setStreamingNodes((prev) => ({ ...prev, [data.node_id]: '' }));
                         if (callbacksRef.current.onNodeStreamStart) {
                             callbacksRef.current.onNodeStreamStart(data.node_id, data.node_type);
                         }
@@ -258,19 +274,18 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                         break;
 
                     case 'node_stream_done': {
-                        // clear the interval immediately
-                        if (nodeDrainRef.current[data.node_id]) {
-                            clearInterval(nodeDrainRef.current[data.node_id]);
-                            delete nodeDrainRef.current[data.node_id];
-                        }
-                        // clear the queue
-                        delete nodeQueuesRef.current[data.node_id];
+                        nodeStreamsCompleteRef.current.add(data.node_id);
 
-                        setStreamingNodes((prev) => {
-                            const next = { ...prev };
-                            delete next[data.node_id];
-                            return next;
-                        });
+                        if (!nodeDrainRef.current[data.node_id]) {
+                            delete nodeQueuesRef.current[data.node_id];
+                            nodeStreamsCompleteRef.current.delete(data.node_id);
+                            setStreamingNodes((prev) => {
+                                const next = { ...prev };
+                                delete next[data.node_id];
+                                return next;
+                            });
+                        }
+
                         if (callbacksRef.current.onNodeStreamDone) {
                             callbacksRef.current.onNodeStreamDone(data.node_id, data.data, data.action);
                         }

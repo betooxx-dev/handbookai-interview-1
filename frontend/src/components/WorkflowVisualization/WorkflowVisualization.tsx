@@ -168,9 +168,14 @@ export default function WorkflowVisualization({
                 let displayLabel = node.label;
                 let displayDescription = node.description || '';
                 if (isStreamingNode) {
-                    const accumulated = streamingNodes[node.id];
-                    if (accumulated.trim()) {
-                        displayLabel = accumulated.trim();
+                    const fullText = streamingNodes[node.id] || '';
+                    const firstNewLine = fullText.indexOf('\n');
+                    if (firstNewLine === -1) {
+                        displayLabel = fullText;
+                        displayDescription = '';
+                    } else {
+                        displayLabel = fullText.substring(0, firstNewLine);
+                        displayDescription = fullText.substring(firstNewLine + 1).trim();
                     }
                 }
 
