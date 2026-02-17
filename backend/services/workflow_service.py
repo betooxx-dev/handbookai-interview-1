@@ -50,7 +50,8 @@ class WorkflowService:
             if event.event_type == "node_stream_done":
                 node_data = event.data["data"]
                 updated = WorkflowService.apply_node_updates_to_workflow(
-                    last_workflow_data, [node_data]
+                    last_workflow_data, [node_data],
+                    selected_node_ids=selected_node_ids,
                 )
                 if updated:
                     last_workflow_data = updated
@@ -337,6 +338,7 @@ class WorkflowService:
     def apply_node_updates_to_workflow(
         current_workflow_data: Optional[str],
         node_updates: list[dict],
+        selected_node_ids: Optional[list[str]] = None,
     ) -> Optional[str]:
         """Apply a list of node updates to the current workflow JSON and return the updated string."""
         if not current_workflow_data and not node_updates:
@@ -361,6 +363,18 @@ class WorkflowService:
             workflow = json.loads(current_workflow_data)
         except json.JSONDecodeError:
             return current_workflow_data
+
+        # Pre-compute: if exactly 2 selected nodes are directly connected, find that edge
+        selected_edge = None
+        if selected_node_ids and len(selected_node_ids) == 2:
+            a, b = selected_node_ids[0], selected_node_ids[1]
+            for e in workflow.get("edges", []):
+                if e.get("from") == a and e.get("to") == b:
+                    selected_edge = (a, b)
+                    break
+                elif e.get("from") == b and e.get("to") == a:
+                    selected_edge = (b, a)
+                    break
 
         for node_data in node_updates:
             node_id = node_data.get("id")
@@ -423,31 +437,76 @@ class WorkflowService:
                     new_node["description"] = node_data["description"]
                 workflow["nodes"].append(new_node)
 
-                # Auto-connect: insert new node before the first end node
+                # Auto-connect: determine edge placement
                 edges = workflow.get("edges", [])
                 node_type = new_node.get("type", "process")
 
+                # Helper: safe string ID comparison
+                def str_id(val): return str(val) if val is not None else ""
+                
+                # Check for single selected node insertion trigger
+                target_insertion_id = None
+                if not selected_edge and selected_node_ids and len(selected_node_ids) == 1:
+                    target_insertion_id = str_id(selected_node_ids[0])
+
                 if node_type == "end":
                     # End node: connect from leaf nodes (nodes with no outgoing edges)
-                    all_sources = {e.get("from") for e in edges}
-                    all_ids = {n["id"] for n in workflow.get("nodes", []) if n["id"] != node_id}
+                    all_sources = {str_id(e.get("from")) for e in edges}
+                    all_ids = {str_id(n["id"]) for n in workflow.get("nodes", []) if str_id(n["id"]) != str_id(node_id)}
                     leaves = [nid for nid in all_ids if nid not in all_sources]
                     for leaf in leaves:
                         edges.append({"from": leaf, "to": node_id})
                 elif node_type == "start":
                     # Start node: connect to first node that has no incoming edges
-                    all_targets = {e.get("to") for e in edges}
-                    all_ids = [n["id"] for n in workflow.get("nodes", []) if n["id"] != node_id]
+                    all_targets = {str_id(e.get("to")) for e in edges}
+                    all_ids = [str_id(n["id"]) for n in workflow.get("nodes", []) if str_id(n["id"]) != str_id(node_id)]
                     roots = [nid for nid in all_ids if nid not in all_targets]
                     for root in roots:
                         edges.append({"from": node_id, "to": root})
+                elif selected_edge:
+                    # Insert between two selected connected nodes: A→NEW→B
+                    src, tgt = selected_edge
+                    # Remove the direct edge A→B (flexible type check)
+                    edges = [
+                        e for e in edges 
+                        if not (str_id(e.get("from")) == str_id(src) and str_id(e.get("to")) == str_id(tgt))
+                    ]
+                    edges.append({"from": src, "to": node_id})
+                    edges.append({"from": node_id, "to": tgt})
+                elif target_insertion_id:
+                    # Insert relative to single selected node
+                    # 1. Verify existence and type
+                    target_node = next((n for n in workflow.get("nodes", []) if str_id(n["id"]) == target_insertion_id), None)
+                    
+                    if target_node and target_node.get("type") == "end":
+                         # Behave like insert-before-end fallback if user selected the end node
+                         incoming = [e for e in edges if str_id(e.get("to")) == target_insertion_id]
+                         if incoming:
+                              pred_edge = incoming[-1]
+                              pred_id = pred_edge["from"]
+                              edges.remove(pred_edge)
+                              edges.append({"from": pred_id, "to": node_id})
+                              edges.append({"from": node_id, "to": target_insertion_id})
+                         else:
+                              edges.append({"from": node_id, "to": target_insertion_id})
+                    else:
+                         # Insert AFTER target node
+                         outgoing = [e for e in edges if str_id(e.get("from")) == target_insertion_id]
+                         if outgoing:
+                              # Split outgoing edges: Target -> OldNext becomes Target -> New -> OldNext
+                              for edge in outgoing:
+                                   edge["from"] = node_id
+                              edges.append({"from": target_insertion_id, "to": node_id})
+                         else:
+                              # Append: Target -> New
+                              edges.append({"from": target_insertion_id, "to": node_id})
                 else:
-                    # Process/decision: insert before the first end node
+                    # Fallback Process/decision: insert before the first end node
                     end_nodes = [n for n in workflow.get("nodes", []) if n.get("type") == "end"]
                     inserted = False
                     if end_nodes:
                         end_id = end_nodes[0]["id"]
-                        incoming = [e for e in edges if e.get("to") == end_id]
+                        incoming = [e for e in edges if str_id(e.get("to")) == str_id(end_id)]
                         if incoming:
                             # Take the last incoming edge to the end node
                             pred_edge = incoming[-1]
@@ -458,8 +517,8 @@ class WorkflowService:
                             inserted = True
                     if not inserted:
                         # No end node — append after the last leaf node
-                        all_sources = {e.get("from") for e in edges}
-                        all_ids = [n["id"] for n in workflow.get("nodes", []) if n["id"] != node_id]
+                        all_sources = {str_id(e.get("from")) for e in edges}
+                        all_ids = [str_id(n["id"]) for n in workflow.get("nodes", []) if str_id(n["id"]) != str_id(node_id)]
                         leaves = [nid for nid in all_ids if nid not in all_sources]
                         if leaves:
                             edges.append({"from": leaves[-1], "to": node_id})

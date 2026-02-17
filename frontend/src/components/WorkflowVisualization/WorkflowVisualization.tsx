@@ -64,18 +64,15 @@ const EFFECT_CLASS_MAP: Record<NodeEffect, string | undefined> = {
     removed: styles.nodeRemoved,
 };
 
-/** Override inline styles that would conflict with CSS animations */
 function applyEffectToNode(node: Node, effect: NodeEffect | undefined): Node {
     if (!effect) return node;
     const cls = EFFECT_CLASS_MAP[effect];
     if (!cls) return node;
 
     if (effect === 'added' || effect === 'removed') {
-        // These animations control opacity and transform — remove conflicting inline props
         const { opacity, transition, transform, ...restStyle } = (node.style || {}) as Record<string, any>;
         return { ...node, className: cls, style: { ...restStyle, transition: 'none' } };
     }
-    // 'updated' only uses box-shadow — no conflicts with inline styles
     return { ...node, className: cls };
 }
 
@@ -97,12 +94,9 @@ export default function WorkflowVisualization({
     const animationRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const effectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Track previous state for diffing
     const prevWorkflowDataRef = useRef<string | null>(null);
     const justSwitchedChatRef = useRef(false);
     const prevChatIdRef = useRef<number | null>(null);
-
-    // Detect chat switches to avoid full reveal on load
     useEffect(() => {
         if (chatId !== prevChatIdRef.current) {
             prevChatIdRef.current = chatId;
@@ -200,7 +194,6 @@ export default function WorkflowVisualization({
                 calculatePositions(workflow.nodes[0].id, centerX, currentY);
             }
 
-            // Show orphaned nodes (no edges) at the bottom so they're never invisible
             const orphanedNodes = workflow.nodes.filter((node: any) => !visited.has(node.id));
             let orphanY = (visited.size + 1) * verticalSpacing + 100;
             orphanedNodes.forEach((node: any) => {
@@ -313,7 +306,6 @@ export default function WorkflowVisualization({
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-    // Re-parse when streaming nodes change (live label updates)
     useEffect(() => {
         const streamingNodeIds = Object.keys(streamingNodes);
         if (streamingNodeIds.length > 0) {
@@ -349,14 +341,12 @@ export default function WorkflowVisualization({
         const newMap = extractNodeMap(workflowData);
         const { nodes: newNodes, edges: newEdges } = parseWorkflow(workflowData);
 
-        // Determine what kind of transition this is
         const isFirstCreation = prevMap.size === 0 && newMap.size > 0 && !justSwitchedChatRef.current;
         justSwitchedChatRef.current = false;
 
         let startTimer: ReturnType<typeof setTimeout> | null = null;
 
         if (isFirstCreation && newNodes.length > 1) {
-            // ── Full sequential reveal (only for brand new workflows) ──
             const hiddenNodes = newNodes.map((n) => ({
                 ...n,
                 style: { ...n.style, opacity: 0, transition: 'opacity 0.3s ease-out' },
@@ -396,7 +386,6 @@ export default function WorkflowVisualization({
                 }
             }, 100);
         } else {
-            // ── Incremental update: per-node diff ──
             const effects = diffNodes(prevMap, newMap);
             const removedIds = Object.entries(effects)
                 .filter(([, e]) => e === 'removed')
@@ -404,7 +393,6 @@ export default function WorkflowVisualization({
             const hasVisualEffects = Object.keys(effects).length > 0;
 
             if (removedIds.length > 0) {
-                // Phase 1: animate removed nodes out (clear conflicting inline styles)
                 setNodes((prev) => prev.map((n) =>
                     removedIds.includes(n.id)
                         ? applyEffectToNode(n, 'removed')
@@ -414,7 +402,6 @@ export default function WorkflowVisualization({
                     (e) => !removedIds.includes(e.source) && !removedIds.includes(e.target)
                 ));
 
-                // Phase 2: after fade-out, swap to new nodes (with add/update effects)
                 startTimer = setTimeout(() => {
                     const effectNodes = newNodes.map((n) =>
                         effects[n.id] ? applyEffectToNode(n, effects[n.id]) : n
@@ -422,7 +409,6 @@ export default function WorkflowVisualization({
                     setNodes(effectNodes);
                     setEdges(newEdges);
 
-                    // Phase 3: clear effect classes
                     effectTimeoutRef.current = setTimeout(() => {
                         setNodes((prev) => prev.map((n) => ({
                             ...n,
@@ -431,7 +417,6 @@ export default function WorkflowVisualization({
                     }, 1200);
                 }, 500);
             } else {
-                // No removals — apply add/update effects directly
                 setNodes((currentNodes) => {
                     if (currentNodes.length !== newNodes.length) {
                         return newNodes.map((n) =>
@@ -461,7 +446,6 @@ export default function WorkflowVisualization({
                 });
                 setEdges(newEdges);
 
-                // Clear effect classes after animation
                 if (hasVisualEffects) {
                     effectTimeoutRef.current = setTimeout(() => {
                         setNodes((prev) => prev.map((n) => {
@@ -487,7 +471,6 @@ export default function WorkflowVisualization({
         };
     }, [workflowData, parseWorkflow, setNodes, setEdges]);
 
-    // Cleanup on unmount
     useEffect(() => {
         return () => {
             if (animationRef.current) clearInterval(animationRef.current);

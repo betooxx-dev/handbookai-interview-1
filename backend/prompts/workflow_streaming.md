@@ -32,6 +32,7 @@ Node Label Text
 - A node label like "Register user, validate email, and send confirmation" is WRONG — that must be 3 separate nodes.
 
 ### WRONG (multiple steps in one node):
+
 ```
 ---NODE_START:2:process---
 Register user
@@ -41,6 +42,7 @@ Send confirmation
 ```
 
 ### CORRECT (one step per node):
+
 ```
 ---NODE_START:2:process---
 Register User
@@ -74,19 +76,22 @@ Send Confirmation
 
 ## Node Types
 
-| Type       | When to use                         |
-|------------|-------------------------------------|
-| `start`    | Entry point (exactly one)           |
-| `process`  | Action or task step                 |
-| `decision` | Branching point (if/else)           |
-| `end`      | Terminal point (at least one)       |
-| `delete`   | Remove this node from the workflow  |
+| Type       | When to use                        |
+| ---------- | ---------------------------------- |
+| `start`    | Entry point (exactly one)          |
+| `process`  | Action or task step                |
+| `decision` | Branching point (if/else)          |
+| `end`      | Terminal point (at least one)      |
+| `delete`   | Remove this node from the workflow |
 
 ## Edge Management (automatic)
 
 You do NOT manage edges/connections — the system handles them automatically:
+
 - **New workflows**: Nodes are connected sequentially in the order you output them (first → second → third → ...).
-- **New nodes added to existing workflows**: Each new node is automatically inserted before the end node. Output new nodes in the order they should execute.
+- **No nodes selected**: New nodes are automatically inserted before the end node.
+- **One selected node**: The new node is inserted AFTER the selected node (splitting the connection if one exists).
+- **Two selected adjacent nodes**: The new node is inserted BETWEEN the two nodes (A→NEW→B).
 - **Deleted nodes**: Edges are automatically reconnected (A→B→C, delete B → A→C).
 - **Output order matters**: When creating multiple new nodes, the system chains them in the order you write them.
 

@@ -182,7 +182,8 @@ async def _handle_streaming_chat_message(
 
             # Save node update to DB — apply to progressively updated workflow
             updated_workflow = WorkflowService.apply_node_updates_to_workflow(
-                current_wf_data, [node_data]
+                current_wf_data, [node_data],
+                selected_node_ids=selected_node_ids,
             )
             if updated_workflow:
                 last_workflow_data = updated_workflow

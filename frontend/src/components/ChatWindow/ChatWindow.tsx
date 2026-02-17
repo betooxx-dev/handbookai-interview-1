@@ -81,7 +81,6 @@ export default function ChatWindow({
         scrollToBottom();
     }, [messages, streamingMessage]);
 
-    // When streaming ends, reload messages from DB to ensure consistency
     useEffect(() => {
         const wasStreaming = prevStreamingRef.current;
         prevStreamingRef.current = isStreaming;
@@ -90,7 +89,6 @@ export default function ChatWindow({
         }
     }, [isStreaming, chatId]);
 
-    // Reset selection when workflow changes (nodes may have changed)
     useEffect(() => {
         setSelectedNodeIds((prev) => {
             const validIds = new Set(availableNodes.map((n) => n.id));
@@ -236,8 +234,8 @@ export default function ChatWindow({
         if (isInputBlocked && typingUser) {
             return `${typingUser.username} is typing...`;
         }
-        if (noNodesSelected) {
-            return "No nodes selected — send to chat without workflow changes, or select nodes first";
+        if (hasWorkflow && selectedNodeIds.length === 0) {
+            return "Please select at least one node (or 'All') to send a message...";
         }
         if (selectedNodeIds.length > 0) {
             return `${selectedNodeIds.length} node(s) selected — describe what to change...`;
@@ -322,7 +320,7 @@ export default function ChatWindow({
                                 {selectedNodeIds.length > 0 ? (
                                     <>{selectedNodeIds.length} node{selectedNodeIds.length > 1 ? 's' : ''} selected</>
                                 ) : (
-                                    <>Select nodes to modify</>
+                                    <span style={{ color: '#ff4444' }}>⚠ Select nodes required</span>
                                 )}
                             </span>
                             <span className={styles.nodeSelectorArrow}>{selectorOpen ? '\u25B2' : '\u25BC'}</span>
@@ -394,12 +392,12 @@ export default function ChatWindow({
                         placeholder={getInputPlaceholder()}
                         className={`${styles.input} ${isInputBlocked ? styles.inputBlocked : ''}`}
                         rows={3}
-                        disabled={loading || isInputBlocked}
+                        disabled={loading || isInputBlocked || (hasWorkflow && selectedNodeIds.length === 0)}
                     />
                     <button
                         onClick={handleSend}
                         className={styles.sendButton}
-                        disabled={loading || !input.trim() || isInputBlocked}
+                        disabled={loading || !input.trim() || isInputBlocked || (hasWorkflow && selectedNodeIds.length === 0)}
                     >
                         Send
                     </button>

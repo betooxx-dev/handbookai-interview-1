@@ -22,19 +22,17 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const sessionCodeRef = useRef<string | null>(null);
 
-    // ── Typewriter queue for smooth streaming ──────────────────
     const chatQueueRef = useRef<string[]>([]);
     const chatDrainRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const nodeQueuesRef = useRef<Record<string, string[]>>({});
     const nodeDrainRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
-    const CHAT_CHAR_INTERVAL = 15;  // ms per character for chat text
-    const NODE_CHAR_INTERVAL = 10;  // ms per character for node text
-    const CHARS_PER_TICK = 3;       // characters to render per interval tick
+    const CHAT_CHAR_INTERVAL = 100;  // ms per character for chat text
+    const NODE_CHAR_INTERVAL = 150;  // ms per character for node text
+    const CHARS_PER_TICK = 1;       // characters to render per interval tick
 
-    /** Start draining chat text queue at a controlled rate */
     const startChatDrain = useCallback(() => {
-        if (chatDrainRef.current) return; // already draining
+        if (chatDrainRef.current) return;
         chatDrainRef.current = setInterval(() => {
             const queue = chatQueueRef.current;
             if (queue.length === 0) {
@@ -44,13 +42,10 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                 }
                 return;
             }
-            // Take up to CHARS_PER_TICK characters from the queue
             const batch = queue.splice(0, CHARS_PER_TICK).join('');
             setStreamingMessage((prev) => prev + batch);
         }, CHAT_CHAR_INTERVAL);
     }, []);
-
-    /** Start draining node text queue at a controlled rate */
     const startNodeDrain = useCallback((nodeId: string) => {
         if (nodeDrainRef.current[nodeId]) return;
         nodeDrainRef.current[nodeId] = setInterval(() => {
@@ -69,10 +64,7 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
             }));
         }, NODE_CHAR_INTERVAL);
     }, []);
-
-    /** Flush all remaining buffered text immediately */
     const flushAllQueues = useCallback(() => {
-        // Flush chat queue
         if (chatDrainRef.current) {
             clearInterval(chatDrainRef.current);
             chatDrainRef.current = null;
@@ -81,7 +73,6 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
             const remaining = chatQueueRef.current.splice(0).join('');
             setStreamingMessage((prev) => prev + remaining);
         }
-        // Flush node queues
         Object.keys(nodeDrainRef.current).forEach((nodeId) => {
             clearInterval(nodeDrainRef.current[nodeId]);
             delete nodeDrainRef.current[nodeId];
