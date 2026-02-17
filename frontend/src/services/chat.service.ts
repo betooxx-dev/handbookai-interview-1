@@ -42,9 +42,13 @@ export class ChatService {
         }
     };
 
-    static sendMessage = async (chatId: number, content: string) => {
+    static sendMessage = async (chatId: number, content: string, selectedNodeIds?: string[]) => {
         try {
-            const { data } = await api.post<Message>(`/chats/${chatId}/messages`, { content });
+            const body: any = { content };
+            if (selectedNodeIds && selectedNodeIds.length > 0) {
+                body.selected_node_ids = selectedNodeIds;
+            }
+            const { data } = await api.post<Message>(`/chats/${chatId}/messages`, body);
             return data;
         } catch (error) {
             console.log(error);

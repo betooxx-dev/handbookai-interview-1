@@ -17,5 +17,4 @@ def _load_prompt(filename: str) -> str:
         return f.read()
 
 
-WORKFLOW_BASE_PROMPT = _load_prompt("workflow_base.md")
 WORKFLOW_STREAMING_PROMPT = _load_prompt("workflow_streaming.md")

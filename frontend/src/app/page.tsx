@@ -53,7 +53,7 @@ export default function Home() {
         user_id: message.user_id,
         role: message.role,
         content: message.content,
-        created_at: new Date().toISOString(),
+        created_at: message.created_at || new Date().toISOString(),
       }]);
     },
     onAiResponse: (message) => {
@@ -63,7 +63,7 @@ export default function Home() {
         role: message.role,
         content: message.content,
         workflow_data: message.workflow_data,
-        created_at: new Date().toISOString(),
+        created_at: message.created_at || new Date().toISOString(),
       }]);
       if (message.workflow_data) {
         setIsRemoteUpdate(true);
@@ -91,24 +91,78 @@ export default function Home() {
       setRefreshMembersKey((k) => k + 1);
     },
     // Streaming callbacks — use functional setState to avoid stale closures
-    onNodeStreamDone: (nodeId, nodeData) => {
+    onNodeStreamStart: (nodeId, nodeType) => {
+      // Add placeholder node for new nodes so they appear during streaming
       setWorkflowData((prev) => {
         if (!prev) return prev;
         try {
           const workflow = JSON.parse(prev);
-          const nodeIndex = workflow.nodes.findIndex((n: any) => n.id === nodeId);
-          if (nodeIndex >= 0) {
-            if (nodeData.label) {
-              workflow.nodes[nodeIndex].label = nodeData.label;
-            }
-            if (nodeData.type) {
-              workflow.nodes[nodeIndex].type = nodeData.type;
-            }
-            if (nodeData.description) {
-              workflow.nodes[nodeIndex].description = nodeData.description;
+          const exists = workflow.nodes.some((n: any) => n.id === nodeId);
+          if (!exists) {
+            workflow.nodes.push({
+              id: nodeId,
+              label: '...',
+              type: nodeType || 'process',
+            });
+            return JSON.stringify(workflow);
+          }
+        } catch {
+          // Ignore parse errors
+        }
+        return prev;
+      });
+    },
+    onNodeStreamDone: (nodeId, nodeData, action) => {
+      setWorkflowData((prev) => {
+        if (!prev) return prev;
+        try {
+          const workflow = JSON.parse(prev);
+
+          if (action === 'delete') {
+            // Find sources and targets to reconnect through the deleted node
+            const sources = workflow.edges
+              .filter((e: any) => e.to === nodeId)
+              .map((e: any) => e.from);
+            const targets = workflow.edges
+              .filter((e: any) => e.from === nodeId)
+              .map((e: any) => e.to);
+
+            // Remove node and its edges
+            workflow.nodes = workflow.nodes.filter((n: any) => n.id !== nodeId);
+            workflow.edges = workflow.edges.filter(
+              (e: any) => e.from !== nodeId && e.to !== nodeId
+            );
+
+            // Reconnect: each source → each target
+            const existingEdges = new Set(
+              workflow.edges.map((e: any) => `${e.from}->${e.to}`)
+            );
+            for (const src of sources) {
+              for (const tgt of targets) {
+                if (src !== tgt && !existingEdges.has(`${src}->${tgt}`)) {
+                  workflow.edges.push({ from: src, to: tgt });
+                }
+              }
             }
             return JSON.stringify(workflow);
           }
+
+          const nodeIndex = workflow.nodes.findIndex((n: any) => n.id === nodeId);
+          if (nodeIndex >= 0) {
+            // Update existing node
+            if (nodeData.label) workflow.nodes[nodeIndex].label = nodeData.label;
+            if (nodeData.type) workflow.nodes[nodeIndex].type = nodeData.type;
+            if (nodeData.description) workflow.nodes[nodeIndex].description = nodeData.description;
+          } else if (action === 'add') {
+            // Add new node
+            workflow.nodes.push({
+              id: nodeId,
+              label: nodeData.label || 'New Node',
+              type: nodeData.type || 'process',
+              ...(nodeData.description ? { description: nodeData.description } : {}),
+            });
+          }
+          return JSON.stringify(workflow);
         } catch {
           // Ignore parse errors
         }
@@ -124,7 +178,7 @@ export default function Home() {
         role: message.role,
         content: message.content,
         workflow_data: message.workflow_data,
-        created_at: new Date().toISOString(),
+        created_at: message.created_at || new Date().toISOString(),
       }]);
       if (message.workflow_data) {
         setIsRemoteUpdate(true);
@@ -176,16 +230,25 @@ export default function Home() {
 
     try {
       const sessionInfo = await CollaborationService.getSessionForChat(chatId);
-      if (sessionInfo.code) collaboration.joinSession(sessionInfo.code);
-      
+      if (sessionInfo.code) {
+        collaboration.joinSession(sessionInfo.code);
+      } else {
+        // Auto-create session for real-time streaming support
+        await collaboration.createSession(chatId);
+      }
     } catch (error) {
-      console.debug('No active collaboration session for this chat');
+      // Fallback: create a new session for streaming
+      try {
+        await collaboration.createSession(chatId);
+      } catch (createError) {
+        console.debug('Could not create streaming session, falling back to HTTP');
+      }
     }
   }, [collaboration.isConnected, collaboration.leaveSession, collaboration.joinSession, chats]);
 
   const handleJoinWithCode = useCallback((code: string) => {
     if (collaboration.isConnected) collaboration.leaveSession();
-    
+
     collaboration.joinSession(code);
   }, [collaboration.isConnected, collaboration.leaveSession, collaboration.joinSession]);
 

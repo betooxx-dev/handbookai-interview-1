@@ -31,8 +31,9 @@ class StreamEvent:
 NODE_START_PATTERN = re.compile(r"---NODE_START:(\w+):(\w+)---")
 NODE_END_PATTERN = re.compile(r"---NODE_END:(\w+)---")
 
-# Maximum possible length of a delimiter like ---NODE_START:some_long_id:process---
-MAX_DELIMITER_LEN = 50
+# Buffer enough chars to detect a partial delimiter split across tokens.
+# Longest delimiter: ---NODE_START:<id>:<type>--- ≈ 30 chars for typical IDs.
+MAX_DELIMITER_LEN = 30
 
 
 class StreamParser:

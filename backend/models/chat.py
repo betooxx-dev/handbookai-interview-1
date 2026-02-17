@@ -13,5 +13,5 @@ class Chat(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    messages = relationship("Message", back_populates="chat", cascade="all, delete-orphan", order_by="Message.created_at")
+    messages = relationship("Message", back_populates="chat", cascade="all, delete-orphan", order_by="Message.id")
     members = relationship("ChatMember", back_populates="chat", cascade="all, delete-orphan")

@@ -49,6 +49,7 @@ export default function ChatWindow({
 
     const isInputBlocked = inputLocked || !!typingUser;
     const isStreaming = !!streamingMessage;
+    const prevStreamingRef = useRef(false);
 
     const availableNodes = useMemo(() => parseNodes(workflowData), [workflowData]);
     const hasWorkflow = availableNodes.length > 0;
@@ -71,9 +72,7 @@ export default function ChatWindow({
                 const existingIds = new Set(prev.map((m) => m.id));
                 const newMsgs = remoteMessages.filter((m) => !existingIds.has(m.id));
                 if (newMsgs.length === 0) return prev;
-                return [...prev, ...newMsgs].sort(
-                    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                );
+                return [...prev, ...newMsgs];
             });
         }
     }, [remoteMessages]);
@@ -81,6 +80,15 @@ export default function ChatWindow({
     useEffect(() => {
         scrollToBottom();
     }, [messages, streamingMessage]);
+
+    // When streaming ends, reload messages from DB to ensure consistency
+    useEffect(() => {
+        const wasStreaming = prevStreamingRef.current;
+        prevStreamingRef.current = isStreaming;
+        if (wasStreaming && !isStreaming && chatId) {
+            loadMessages();
+        }
+    }, [isStreaming, chatId]);
 
     // Reset selection when workflow changes (nodes may have changed)
     useEffect(() => {
@@ -135,11 +143,10 @@ export default function ChatWindow({
         }
     };
 
-    const needsNodeSelection = isCollaborating && hasWorkflow && selectedNodeIds.length === 0;
+    const noNodesSelected = isCollaborating && hasWorkflow && selectedNodeIds.length === 0;
 
     const handleSend = async () => {
         if (!input.trim() || !chatId || loading || isInputBlocked) return;
-        if (needsNodeSelection) return;
 
         const userMessage = input;
         setInput('');
@@ -171,7 +178,11 @@ export default function ChatWindow({
         setMessages((prev) => [...prev, tempUserMessage]);
 
         try {
-            const response = await ChatService.sendMessage(chatId, userMessage);
+            const response = await ChatService.sendMessage(
+                chatId,
+                userMessage,
+                selectedNodeIds.length > 0 ? selectedNodeIds : undefined,
+            );
             await loadMessages();
 
             if (response.workflow_data)
@@ -225,8 +236,8 @@ export default function ChatWindow({
         if (isInputBlocked && typingUser) {
             return `${typingUser.username} is typing...`;
         }
-        if (needsNodeSelection) {
-            return "Select which nodes to modify before sending...";
+        if (noNodesSelected) {
+            return "No nodes selected — send to chat without workflow changes, or select nodes first";
         }
         if (selectedNodeIds.length > 0) {
             return `${selectedNodeIds.length} node(s) selected — describe what to change...`;
@@ -336,6 +347,7 @@ export default function ChatWindow({
                                         />
                                         <span className={styles.nodeSelectorLabel}>
                                             <span className={`${styles.nodeTypeDot} ${styles[`dot_${node.type}`]}`} />
+                                            <span className={styles.nodeIdBadge}>#{node.id}</span>
                                             {node.label}
                                         </span>
                                     </label>
@@ -387,7 +399,7 @@ export default function ChatWindow({
                     <button
                         onClick={handleSend}
                         className={styles.sendButton}
-                        disabled={loading || !input.trim() || isInputBlocked || needsNodeSelection}
+                        disabled={loading || !input.trim() || isInputBlocked}
                     >
                         Send
                     </button>

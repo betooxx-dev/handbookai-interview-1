@@ -401,3 +401,13 @@
 .dot_end {
   background: #667eea;
 }
+
+.nodeIdBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #999;
+  background: #f0f0f0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}

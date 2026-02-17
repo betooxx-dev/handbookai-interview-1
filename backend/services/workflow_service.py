@@ -3,43 +3,104 @@ import re
 from typing import Optional
 
 from fastapi import HTTPException
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI
 from sqlalchemy.orm import Session
 
 from config import settings
 from models import Chat, Message
 from services.chat_service import ChatService
-from prompts import WORKFLOW_BASE_PROMPT, WORKFLOW_STREAMING_PROMPT
+from prompts import WORKFLOW_STREAMING_PROMPT
 
 
 class WorkflowService:
     @staticmethod
-    def create_message_with_ai(chat_id: int, content: str, user_id: int, db: Session) -> Message:
-        chat = ChatService.get_chat(chat_id, user_id, db)
+    async def create_message_with_ai(
+        chat_id: int, content: str, user_id: int, db: Session,
+        selected_node_ids: Optional[list[str]] = None,
+    ) -> Message:
+        from services.stream_parser import StreamParser
 
-        # Save user message
-        user_message = Message(chat_id=chat_id, role="user", content=content, user_id=user_id)
-        db.add(user_message)
-        db.commit()
-        db.refresh(user_message)
-
-        # Auto-title on first message
-        new_title = None
-        if chat.title == "New Conversation":
-            message_count = db.query(Message).filter(Message.chat_id == chat_id).count()
-            if message_count == 1:
-                new_title = content[:50]
-                if len(content) > 50:
-                    new_title = new_title.rsplit(" ", 1)[0] + "..."
-                chat.title = new_title
-                db.commit()
-
-        # Generate AI response
+        # Get streaming response + context (saves user message, handles auto-title)
         try:
-            ai_message = WorkflowService._generate_ai_response(chat_id, content, db)
+            stream, chat, user_message, new_title, last_workflow_data = (
+                await WorkflowService.stream_ai_response(
+                    chat_id, content, user_id, db,
+                    selected_node_ids=selected_node_ids,
+                )
+            )
         except Exception as e:
             print(f"OpenAI Error: {type(e).__name__}: {str(e)}")
-            ai_message = WorkflowService._create_fallback_message(chat_id, str(e), db)
+            return WorkflowService._create_fallback_message(chat_id, str(e), db)
+
+        # Compute existing node IDs for server-side validation
+        existing_node_ids = set()
+        if last_workflow_data:
+            try:
+                existing_node_ids = {n.get("id") for n in json.loads(last_workflow_data).get("nodes", [])}
+            except Exception:
+                pass
+
+        # Consume stream locally with StreamParser (no broadcasting for HTTP path)
+        async def on_event(event):
+            nonlocal last_workflow_data
+            if event.event_type in ("node_stream_start", "node_stream_delta", "node_stream_done"):
+                node_id = event.data.get("node_id")
+                if selected_node_ids and node_id in existing_node_ids and node_id not in selected_node_ids:
+                    return  # Reject unauthorized node modification
+            if event.event_type == "node_stream_done":
+                node_data = event.data["data"]
+                updated = WorkflowService.apply_node_updates_to_workflow(
+                    last_workflow_data, [node_data]
+                )
+                if updated:
+                    last_workflow_data = updated
+
+        parser = StreamParser(on_event=on_event)
+
+        try:
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    await parser.feed(delta.content)
+            await parser.finish()
+        except Exception as e:
+            print(f"[STREAM ERROR] {type(e).__name__}: {e}")
+            await parser.finish()
+
+        # Build final display text
+        full_text = parser.full_text
+        final_workflow = last_workflow_data
+
+        if parser.completed_nodes:
+            chat_text = re.sub(
+                r"---NODE_START:\w+(?::\w+)?---.*?---NODE_END:\w+---",
+                "", full_text, flags=re.DOTALL,
+            ).strip()
+            chat_text = re.sub(r"\n{3,}", "\n\n", chat_text)
+        else:
+            # Fallback: try to extract JSON workflow
+            extracted_json, full_match = WorkflowService._extract_json_workflow(full_text)
+            if extracted_json:
+                try:
+                    parsed = json.loads(extracted_json)
+                    if "nodes" in parsed and "edges" in parsed and len(parsed["nodes"]) > 0:
+                        final_workflow = extracted_json
+                except (json.JSONDecodeError, KeyError):
+                    pass
+                chat_text = full_text.replace(full_match, "").strip() if full_match else full_text
+                chat_text = re.sub(r"```\s*```", "", chat_text).strip()
+                chat_text = re.sub(r"\n\s*\n\s*\n+", "\n\n", chat_text)
+            else:
+                chat_text = full_text
+
+        if not chat_text or len(chat_text.strip()) < 5:
+            chat_text = "I've updated the workflow as requested."
+
+        ai_message = WorkflowService.save_streamed_ai_message(
+            chat_id, chat_text, final_workflow, db,
+        )
 
         if new_title:
             ai_message.chat_title = new_title
@@ -196,26 +257,58 @@ class WorkflowService:
                         if node["id"] not in selected_node_ids and node.get("editable") is not False:
                             node["editable"] = False
                 workflow_context = (
-                    f"\n\nCURRENT WORKFLOW:\n{json.dumps(workflow_json, indent=2)}\n"
+                    f"\n\n<current_workflow>\n{json.dumps(workflow_json, indent=2)}\n</current_workflow>\n"
                 )
             except (json.JSONDecodeError, KeyError):
                 workflow_context = (
-                    f"\n\nCURRENT WORKFLOW:\n{last_workflow_data}\n"
+                    f"\n\n<current_workflow>\n{last_workflow_data}\n</current_workflow>\n"
                 )
 
         selected_context = ""
         if selected_node_ids:
-            selected_context = f"\n\nselected_node_ids (ONLY modify these): {json.dumps(selected_node_ids)}"
+            # Include labels so the LLM can match IDs to node names
+            selected_details = []
+            if last_workflow_data:
+                try:
+                    wf_nodes = json.loads(last_workflow_data).get("nodes", [])
+                    node_map = {n["id"]: n.get("label", "Unknown") for n in wf_nodes}
+                    for nid in selected_node_ids:
+                        label = node_map.get(nid, "Unknown")
+                        selected_details.append(f'  - id="{nid}" label="{label}"')
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            if selected_details:
+                details = "\n".join(selected_details)
+                selected_context = (
+                    f"\n\nSELECTED NODES — Use ---NODE_START:ID:TYPE--- delimiters for these:\n"
+                    f"{details}\n"
+                    f"You MUST output delimiter blocks for any changes to these nodes. Do NOT just describe the changes in text."
+                )
+            else:
+                selected_context = f"\n\nselected_node_ids (ONLY modify these): {json.dumps(selected_node_ids)}"
 
         system_message = {
             "role": "system",
             "content": WORKFLOW_STREAMING_PROMPT + workflow_context + selected_context,
         }
 
+        # Inject selected node info into the last user message so the AI
+        # knows what "this node" / "este nodo" refers to
+        if selected_node_ids and conversation and conversation[-1]["role"] == "user":
+            try:
+                wf_nodes = json.loads(last_workflow_data).get("nodes", []) if last_workflow_data else []
+                node_map = {n["id"]: n.get("label", "") for n in wf_nodes}
+                parts = [f'#{nid} "{node_map.get(nid, "")}"' for nid in selected_node_ids]
+                prefix = f'[The user selected node(s): {", ".join(parts)}]\n\n'
+                conversation = conversation.copy()
+                conversation[-1] = {**conversation[-1], "content": prefix + conversation[-1]["content"]}
+            except Exception:
+                pass
+
         stream = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             messages=[system_message] + conversation,
-            max_tokens=5000,
+            max_completion_tokens=5000,
             stream=True,
         )
 
@@ -274,6 +367,27 @@ class WorkflowService:
             if not node_id:
                 continue
 
+            # Handle node deletion — reconnect edges through the deleted node
+            if node_data.get("type") == "delete":
+                # Find sources and targets of the deleted node
+                sources = [e.get("from") for e in workflow.get("edges", []) if e.get("to") == node_id]
+                targets = [e.get("to") for e in workflow.get("edges", []) if e.get("from") == node_id]
+
+                # Remove the node and its edges
+                workflow["nodes"] = [n for n in workflow.get("nodes", []) if n["id"] != node_id]
+                workflow["edges"] = [
+                    e for e in workflow.get("edges", [])
+                    if e.get("from") != node_id and e.get("to") != node_id
+                ]
+
+                # Reconnect: each source → each target
+                existing_edges = {(e["from"], e["to"]) for e in workflow.get("edges", [])}
+                for src in sources:
+                    for tgt in targets:
+                        if src != tgt and (src, tgt) not in existing_edges:
+                            workflow["edges"].append({"from": src, "to": tgt})
+                continue
+
             # Find and update existing node
             found = False
             for i, existing_node in enumerate(workflow.get("nodes", [])):
@@ -309,6 +423,49 @@ class WorkflowService:
                     new_node["description"] = node_data["description"]
                 workflow["nodes"].append(new_node)
 
+                # Auto-connect: insert new node before the first end node
+                edges = workflow.get("edges", [])
+                node_type = new_node.get("type", "process")
+
+                if node_type == "end":
+                    # End node: connect from leaf nodes (nodes with no outgoing edges)
+                    all_sources = {e.get("from") for e in edges}
+                    all_ids = {n["id"] for n in workflow.get("nodes", []) if n["id"] != node_id}
+                    leaves = [nid for nid in all_ids if nid not in all_sources]
+                    for leaf in leaves:
+                        edges.append({"from": leaf, "to": node_id})
+                elif node_type == "start":
+                    # Start node: connect to first node that has no incoming edges
+                    all_targets = {e.get("to") for e in edges}
+                    all_ids = [n["id"] for n in workflow.get("nodes", []) if n["id"] != node_id]
+                    roots = [nid for nid in all_ids if nid not in all_targets]
+                    for root in roots:
+                        edges.append({"from": node_id, "to": root})
+                else:
+                    # Process/decision: insert before the first end node
+                    end_nodes = [n for n in workflow.get("nodes", []) if n.get("type") == "end"]
+                    inserted = False
+                    if end_nodes:
+                        end_id = end_nodes[0]["id"]
+                        incoming = [e for e in edges if e.get("to") == end_id]
+                        if incoming:
+                            # Take the last incoming edge to the end node
+                            pred_edge = incoming[-1]
+                            pred_id = pred_edge["from"]
+                            edges.remove(pred_edge)
+                            edges.append({"from": pred_id, "to": node_id})
+                            edges.append({"from": node_id, "to": end_id})
+                            inserted = True
+                    if not inserted:
+                        # No end node — append after the last leaf node
+                        all_sources = {e.get("from") for e in edges}
+                        all_ids = [n["id"] for n in workflow.get("nodes", []) if n["id"] != node_id]
+                        leaves = [nid for nid in all_ids if nid not in all_sources]
+                        if leaves:
+                            edges.append({"from": leaves[-1], "to": node_id})
+
+                workflow["edges"] = edges
+
         # Clean metadata from all nodes
         for node in workflow.get("nodes", []):
             node.pop("editable", None)
@@ -319,71 +476,10 @@ class WorkflowService:
     # ── Private helpers ──────────────────────────────────────────
 
     @staticmethod
-    def _generate_ai_response(chat_id: int, user_content: str, db: Session) -> Message:
-        client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=120.0)
-
-        messages = (
-            db.query(Message)
-            .filter(Message.chat_id == chat_id)
-            .order_by(Message.created_at)
-            .all()
-        )
-
-        last_workflow_msg = (
-            db.query(Message)
-            .filter(
-                Message.chat_id == chat_id,
-                Message.role == "assistant",
-                Message.workflow_data.isnot(None),
-            )
-            .order_by(Message.created_at.desc())
-            .first()
-        )
-
-        conversation = WorkflowService._build_conversation(messages)
-
-        workflow_context = ""
-        if last_workflow_msg and last_workflow_msg.workflow_data:
-            workflow_context = (
-                f"\n\nCURRENT WORKFLOW (use this as your baseline for any modifications):\n"
-                f"{last_workflow_msg.workflow_data}\n\n"
-                f"When making changes, start with this exact workflow and ONLY modify what the user specifically requests."
-            )
-
-        system_message = {
-            "role": "system",
-            "content": WORKFLOW_BASE_PROMPT + workflow_context,
-        }
-
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[system_message] + conversation,
-            max_tokens=5000,
-        )
-
-        ai_content = response.choices[0].message.content
-
-        if not ai_content or len(ai_content.strip()) == 0:
-            return WorkflowService._handle_empty_response(chat_id, db)
-
-        workflow_data, display_content = WorkflowService._extract_and_clean(ai_content, user_content)
-
-        ai_message = Message(
-            chat_id=chat_id,
-            role="assistant",
-            content=display_content,
-            workflow_data=workflow_data,
-        )
-        db.add(ai_message)
-        db.commit()
-        db.refresh(ai_message)
-        return ai_message
-
-    @staticmethod
-    def _build_conversation(messages: list) -> list:
+    def _build_conversation(messages: list, include_workflow_json: bool = True) -> list:
         conversation = []
         for msg in messages:
-            if msg.role == "assistant" and msg.workflow_data:
+            if msg.role == "assistant" and msg.workflow_data and include_workflow_json:
                 content = f"{msg.content}\n\nCurrent workflow JSON:\n{msg.workflow_data}"
                 conversation.append({"role": msg.role, "content": content})
             else:
@@ -418,82 +514,6 @@ class WorkflowService:
                 continue
 
         return None, None
-
-    @staticmethod
-    def _extract_and_clean(ai_content: str, user_content: str) -> tuple:
-        workflow_data = None
-        display_content = ai_content
-
-        try:
-            extracted_json, full_match = WorkflowService._extract_json_workflow(ai_content)
-
-            if extracted_json:
-                workflow_data = extracted_json
-                parsed = json.loads(workflow_data)
-                if "nodes" not in parsed or "edges" not in parsed:
-                    raise ValueError("Invalid workflow structure")
-                if len(parsed["nodes"]) == 0:
-                    raise ValueError("Workflow has no nodes")
-
-                display_content = ai_content.replace(full_match, "").strip()
-                display_content = re.sub(r"```\s*```", "", display_content).strip()
-                display_content = re.sub(r"\n\s*\n\s*\n+", "\n\n", display_content)
-
-                if not display_content or len(display_content) < 10:
-                    display_content = (
-                        "I've created a workflow visualization for you based on your requirements. "
-                        "You can see it in the visualization panel on the right."
-                    )
-            else:
-                workflow_keywords = ["workflow", "flowchart", "process", "flujo", "diagrama"]
-                if any(kw in user_content.lower() for kw in workflow_keywords):
-                    workflow_data = json.dumps(
-                        {
-                            "nodes": [
-                                {"id": "1", "label": "Start", "type": "start"},
-                                {"id": "2", "label": "Process request", "type": "process"},
-                                {"id": "3", "label": "Complete", "type": "end"},
-                            ],
-                            "edges": [{"from": "1", "to": "2"}, {"from": "2", "to": "3"}],
-                        }
-                    )
-                    display_content = (
-                        ai_content
-                        if ai_content
-                        else "I've created a basic workflow structure for you. You can refine it by describing the specific steps you need."
-                    )
-        except Exception as parse_error:
-            print(f"JSON extraction error: {parse_error}")
-            workflow_data = None
-
-        return workflow_data, display_content
-
-    @staticmethod
-    def _handle_empty_response(chat_id: int, db: Session) -> Message:
-        prev_message = (
-            db.query(Message)
-            .filter(
-                Message.chat_id == chat_id,
-                Message.role == "assistant",
-                Message.workflow_data.isnot(None),
-            )
-            .order_by(Message.created_at.desc())
-            .first()
-        )
-
-        if prev_message and prev_message.workflow_data:
-            ai_message = Message(
-                chat_id=chat_id,
-                role="assistant",
-                content="I apologize, I encountered an issue generating a response. I've kept your previous workflow intact. Please try rephrasing your request.",
-                workflow_data=prev_message.workflow_data,
-            )
-            db.add(ai_message)
-            db.commit()
-            db.refresh(ai_message)
-            return ai_message
-
-        raise Exception("Empty response from AI model and no previous workflow available")
 
     @staticmethod
     def _create_fallback_message(chat_id: int, error: str, db: Session) -> Message:

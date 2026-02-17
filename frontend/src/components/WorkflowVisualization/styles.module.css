@@ -41,7 +41,7 @@
   height: 100%;
 }
 
-/* Streaming node animation */
+/* ── Streaming: pulsing glow while AI writes ── */
 .streamingNode {
   animation: nodePulse 1.5s ease-in-out infinite;
 }
@@ -55,3 +55,51 @@
   }
 }
 
+/* ── Added node: slide in + fade in ── */
+.nodeAdded {
+  animation: nodeSlideIn 0.5s ease-out;
+}
+
+@keyframes nodeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ── Updated node: blue flash highlight ── */
+.nodeUpdated {
+  animation: nodeHighlight 1s ease-out;
+}
+
+@keyframes nodeHighlight {
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+  20% {
+    box-shadow: 0 0 20px 4px rgba(59, 130, 246, 0.7);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
+/* ── Removed node: shrink + fade out ── */
+.nodeRemoved {
+  animation: nodeFadeOut 0.45s ease-out forwards;
+}
+
+@keyframes nodeFadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}

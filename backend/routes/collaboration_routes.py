@@ -114,13 +114,24 @@ async def _handle_streaming_chat_message(
                 "role": "user",
                 "content": content,
                 "username": user.username,
+                "created_at": user_message.created_at.isoformat() if user_message.created_at else None,
             },
         },
         exclude_user_id=user.id,
     )
 
+    # Compute existing node IDs for server-side validation
+    existing_node_ids = set()
+    _init_wf = last_workflow_data or session.workflow_data
+    if _init_wf:
+        try:
+            existing_node_ids = {n.get("id") for n in json.loads(_init_wf).get("nodes", [])}
+        except Exception:
+            pass
+
     # Step 6: Process stream with StreamParser
     async def on_parser_event(event):
+        nonlocal last_workflow_data
         """Broadcast parser events to all connected users."""
         if event.event_type == "ai_stream_delta":
             await collaboration_manager.broadcast_all(
@@ -128,20 +139,26 @@ async def _handle_streaming_chat_message(
                 {"type": "ai_stream_delta", "content": event.data["content"]},
             )
         elif event.event_type == "node_stream_start":
+            node_id = event.data["node_id"]
+            if selected_node_ids and node_id in existing_node_ids and node_id not in selected_node_ids:
+                return
             await collaboration_manager.broadcast_all(
                 code,
                 {
                     "type": "node_stream_start",
-                    "node_id": event.data["node_id"],
+                    "node_id": node_id,
                     "node_type": event.data.get("node_type", "process"),
                 },
             )
         elif event.event_type == "node_stream_delta":
+            node_id = event.data["node_id"]
+            if selected_node_ids and node_id in existing_node_ids and node_id not in selected_node_ids:
+                return
             await collaboration_manager.broadcast_all(
                 code,
                 {
                     "type": "node_stream_delta",
-                    "node_id": event.data["node_id"],
+                    "node_id": node_id,
                     "content": event.data["content"],
                 },
             )
@@ -149,13 +166,27 @@ async def _handle_streaming_chat_message(
             node_data = event.data["data"]
             node_id = event.data["node_id"]
 
-            # Save node update to DB by applying to workflow
+            if selected_node_ids and node_id in existing_node_ids and node_id not in selected_node_ids:
+                return
+
+            # Determine action type: add, update, or delete
+            action = "add"
+            current_wf_data = last_workflow_data or session.workflow_data
+            if current_wf_data:
+                try:
+                    current_wf = json.loads(current_wf_data)
+                    if any(n.get("id") == node_id for n in current_wf.get("nodes", [])):
+                        action = "delete" if node_data.get("type") == "delete" else "update"
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Save node update to DB — apply to progressively updated workflow
             updated_workflow = WorkflowService.apply_node_updates_to_workflow(
-                last_workflow_data or session.workflow_data, [node_data]
+                current_wf_data, [node_data]
             )
             if updated_workflow:
+                last_workflow_data = updated_workflow
                 collaboration_manager.update_workflow(code, updated_workflow)
-                # Persist to DB
                 last_msg = (
                     db.query(Message)
                     .filter(
@@ -176,6 +207,7 @@ async def _handle_streaming_chat_message(
                     "type": "node_stream_done",
                     "node_id": node_id,
                     "data": node_data,
+                    "action": action,
                 },
             )
 
@@ -183,83 +215,108 @@ async def _handle_streaming_chat_message(
 
     try:
         async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                token = chunk.choices[0].delta.content
-                await parser.feed(token)
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta and delta.content:
+                await parser.feed(delta.content)
 
         await parser.finish()
     except Exception as stream_error:
+        print(f"[STREAM ERROR] {type(stream_error).__name__}: {stream_error}")
         await parser.finish()
         await collaboration_manager.broadcast_all(
             code,
             {"type": "error", "message": f"Stream error: {stream_error}"},
         )
 
-    # Step 7: Save complete AI message to DB
-    import re as _re
-    full_text = parser.full_text
+    # Step 7: Save complete AI message and broadcast ai_stream_done.
+    # Wrapped in try/except so ai_stream_done ALWAYS fires even on error.
+    try:
+        import re as _re
+        full_text = parser.full_text
 
-    # Build final workflow data
-    final_workflow = last_workflow_data or session.workflow_data
+        # Build final workflow data
+        final_workflow = last_workflow_data or session.workflow_data
 
-    if parser.completed_nodes:
-        # AI used NODE_START/END delimiters — apply node updates
-        final_workflow = WorkflowService.apply_node_updates_to_workflow(
-            final_workflow, parser.completed_nodes
-        )
-        # Clean the chat text by removing delimiter blocks
-        chat_text = _re.sub(
-            r"---NODE_START:\w+(?::\w+)?---.*?---NODE_END:\w+---",
-            "",
-            full_text,
-            flags=_re.DOTALL,
-        ).strip()
-        chat_text = _re.sub(r"\n{3,}", "\n\n", chat_text)
-    else:
-        # FALLBACK: AI responded in old format (JSON embedded in text).
-        # Use the existing extraction method to find workflow JSON.
-        extracted_json, full_match = WorkflowService._extract_json_workflow(full_text)
-        if extracted_json:
-            try:
-                parsed = json.loads(extracted_json)
-                if "nodes" in parsed and "edges" in parsed and len(parsed["nodes"]) > 0:
-                    final_workflow = extracted_json
-            except (json.JSONDecodeError, KeyError):
-                pass
-
-            # Remove JSON from display text
-            chat_text = full_text.replace(full_match, "").strip() if full_match else full_text
-            chat_text = _re.sub(r"```\s*```", "", chat_text).strip()
-            chat_text = _re.sub(r"\n\s*\n\s*\n+", "\n\n", chat_text)
+        if parser.completed_nodes:
+            # Node updates already applied incrementally in on_parser_event
+            # Clean the chat text by removing delimiter blocks
+            chat_text = _re.sub(
+                r"---NODE_START:\w+(?::\w+)?---.*?---NODE_END:\w+---",
+                "",
+                full_text,
+                flags=_re.DOTALL,
+            ).strip()
+            chat_text = _re.sub(r"\n{3,}", "\n\n", chat_text)
         else:
-            chat_text = full_text
+            # FALLBACK: AI didn't use delimiters. Try extracting JSON.
+            extracted_json, full_match = WorkflowService._extract_json_workflow(full_text)
+            if extracted_json:
+                try:
+                    parsed = json.loads(extracted_json)
+                    if "nodes" in parsed and "edges" in parsed and len(parsed["nodes"]) > 0:
+                        final_workflow = extracted_json
+                except (json.JSONDecodeError, KeyError):
+                    pass
 
-        if not chat_text or len(chat_text.strip()) < 5:
-            chat_text = "I've updated the workflow as requested."
+                chat_text = full_text.replace(full_match, "").strip() if full_match else full_text
+                chat_text = _re.sub(r"```\s*```", "", chat_text).strip()
+                chat_text = _re.sub(r"\n\s*\n\s*\n+", "\n\n", chat_text)
+            else:
+                chat_text = full_text
 
-    if final_workflow:
-        collaboration_manager.update_workflow(code, final_workflow)
+            if not chat_text or len(chat_text.strip()) < 5:
+                chat_text = "I've updated the workflow as requested."
 
-    ai_message = WorkflowService.save_streamed_ai_message(
-        session.chat_id, chat_text, final_workflow, db
-    )
+        if final_workflow:
+            collaboration_manager.update_workflow(code, final_workflow)
 
-    # Broadcast ai_stream_done with the final message
-    await collaboration_manager.broadcast_all(
-        code,
-        {
-            "type": "ai_stream_done",
-            "message": {
-                "id": ai_message.id,
-                "chat_id": session.chat_id,
-                "role": "assistant",
-                "content": ai_message.content,
-                "workflow_data": ai_message.workflow_data,
+        ai_message = WorkflowService.save_streamed_ai_message(
+            session.chat_id, chat_text, final_workflow, db
+        )
+
+        await collaboration_manager.broadcast_all(
+            code,
+            {
+                "type": "ai_stream_done",
+                "message": {
+                    "id": ai_message.id,
+                    "chat_id": session.chat_id,
+                    "role": "assistant",
+                    "content": ai_message.content,
+                    "workflow_data": ai_message.workflow_data,
+                    "created_at": ai_message.created_at.isoformat() if ai_message.created_at else None,
+                },
             },
-        },
-    )
+        )
+    except Exception as post_error:
+        # Even on error, ensure ai_stream_done fires so the frontend can clean up
+        error_content = f"An error occurred while processing the response: {post_error}"
+        try:
+            fallback_msg = WorkflowService.save_streamed_ai_message(
+                session.chat_id, error_content, last_workflow_data, db
+            )
+            msg_id = fallback_msg.id
+        except Exception:
+            db.rollback()
+            msg_id = -1
 
-    # Step 8: Unlock nodes
+        await collaboration_manager.broadcast_all(
+            code,
+            {
+                "type": "ai_stream_done",
+                "message": {
+                    "id": msg_id,
+                    "chat_id": session.chat_id,
+                    "role": "assistant",
+                    "content": error_content,
+                    "workflow_data": last_workflow_data,
+                },
+            },
+        )
+
+    # Step 8: Unlock nodes (always runs)
     if actually_locked:
         collaboration_manager.unlock_nodes_for_ai(code, actually_locked, user.id)
         await collaboration_manager.broadcast_all(
@@ -267,13 +324,12 @@ async def _handle_streaming_chat_message(
             {"type": "nodes_unlocked", "node_ids": actually_locked},
         )
 
-    # Step 9: Unlock input
+    # Step 9: Unlock input (always runs)
     await collaboration_manager.broadcast_all(
         code,
         {"type": "input_unlocked"},
     )
 
-    # Broadcast typing_done for legacy compatibility
     await collaboration_manager.broadcast_all(
         code,
         {"type": "typing_done"},
@@ -281,16 +337,19 @@ async def _handle_streaming_chat_message(
 
     # Check if title changed
     if chat_obj:
-        db.refresh(chat_obj)
-        if chat_obj.title != old_title:
-            await collaboration_manager.broadcast_all(
-                code,
-                {
-                    "type": "title_update",
-                    "chat_id": session.chat_id,
-                    "title": chat_obj.title,
-                },
-            )
+        try:
+            db.refresh(chat_obj)
+            if chat_obj.title != old_title:
+                await collaboration_manager.broadcast_all(
+                    code,
+                    {
+                        "type": "title_update",
+                        "chat_id": session.chat_id,
+                        "title": chat_obj.title,
+                    },
+                )
+        except Exception:
+            pass
 
 
 @router.websocket("/ws/collaborate/{code}")

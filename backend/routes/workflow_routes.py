@@ -17,7 +17,7 @@ async def create_message(
     current_user: User = Depends(AuthService.get_current_user),
     db: Session = Depends(get_db),
 ):
-    return WorkflowController.create_message(chat_id, message, current_user, db)
+    return await WorkflowController.create_message(chat_id, message, current_user, db)
 
 
 @router.patch("/messages/{message_id}/workflow")

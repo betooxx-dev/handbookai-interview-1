@@ -7,8 +7,11 @@ from services import WorkflowService
 
 class WorkflowController:
     @staticmethod
-    def create_message(chat_id: int, message: MessageCreate, current_user: User, db: Session):
-        return WorkflowService.create_message_with_ai(chat_id, message.content, current_user.id, db)
+    async def create_message(chat_id: int, message: MessageCreate, current_user: User, db: Session):
+        return await WorkflowService.create_message_with_ai(
+            chat_id, message.content, current_user.id, db,
+            selected_node_ids=message.selected_node_ids,
+        )
 
     @staticmethod
     def update_workflow(message_id: int, workflow_data: dict, current_user: User, db: Session):

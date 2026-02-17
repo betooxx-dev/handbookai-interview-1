@@ -97,9 +97,9 @@ export interface CollaborationCallbacks {
     onInputUnlocked?: () => void;
     onNodesLocked?: (nodeIds: string[], user: { id: number; username: string }) => void;
     onNodesUnlocked?: (nodeIds: string[]) => void;
-    onNodeStreamStart?: (nodeId: string) => void;
+    onNodeStreamStart?: (nodeId: string, nodeType?: string) => void;
     onNodeStreamDelta?: (nodeId: string, content: string) => void;
-    onNodeStreamDone?: (nodeId: string, data: any) => void;
+    onNodeStreamDone?: (nodeId: string, data: any, action?: string) => void;
     onAiStreamDelta?: (content: string) => void;
     onAiStreamDone?: (message: any) => void;
 }

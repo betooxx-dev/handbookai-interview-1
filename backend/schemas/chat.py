@@ -20,6 +20,7 @@ class ChatResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str
+    selected_node_ids: Optional[List[str]] = None
 
 
 class MessageResponse(BaseModel):

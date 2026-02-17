@@ -22,6 +22,82 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const sessionCodeRef = useRef<string | null>(null);
 
+    // ── Typewriter queue for smooth streaming ──────────────────
+    const chatQueueRef = useRef<string[]>([]);
+    const chatDrainRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const nodeQueuesRef = useRef<Record<string, string[]>>({});
+    const nodeDrainRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+
+    const CHAT_CHAR_INTERVAL = 15;  // ms per character for chat text
+    const NODE_CHAR_INTERVAL = 10;  // ms per character for node text
+    const CHARS_PER_TICK = 3;       // characters to render per interval tick
+
+    /** Start draining chat text queue at a controlled rate */
+    const startChatDrain = useCallback(() => {
+        if (chatDrainRef.current) return; // already draining
+        chatDrainRef.current = setInterval(() => {
+            const queue = chatQueueRef.current;
+            if (queue.length === 0) {
+                if (chatDrainRef.current) {
+                    clearInterval(chatDrainRef.current);
+                    chatDrainRef.current = null;
+                }
+                return;
+            }
+            // Take up to CHARS_PER_TICK characters from the queue
+            const batch = queue.splice(0, CHARS_PER_TICK).join('');
+            setStreamingMessage((prev) => prev + batch);
+        }, CHAT_CHAR_INTERVAL);
+    }, []);
+
+    /** Start draining node text queue at a controlled rate */
+    const startNodeDrain = useCallback((nodeId: string) => {
+        if (nodeDrainRef.current[nodeId]) return;
+        nodeDrainRef.current[nodeId] = setInterval(() => {
+            const queue = nodeQueuesRef.current[nodeId];
+            if (!queue || queue.length === 0) {
+                if (nodeDrainRef.current[nodeId]) {
+                    clearInterval(nodeDrainRef.current[nodeId]);
+                    delete nodeDrainRef.current[nodeId];
+                }
+                return;
+            }
+            const batch = queue.splice(0, CHARS_PER_TICK).join('');
+            setStreamingNodes((prev) => ({
+                ...prev,
+                [nodeId]: (prev[nodeId] || '') + batch,
+            }));
+        }, NODE_CHAR_INTERVAL);
+    }, []);
+
+    /** Flush all remaining buffered text immediately */
+    const flushAllQueues = useCallback(() => {
+        // Flush chat queue
+        if (chatDrainRef.current) {
+            clearInterval(chatDrainRef.current);
+            chatDrainRef.current = null;
+        }
+        if (chatQueueRef.current.length > 0) {
+            const remaining = chatQueueRef.current.splice(0).join('');
+            setStreamingMessage((prev) => prev + remaining);
+        }
+        // Flush node queues
+        Object.keys(nodeDrainRef.current).forEach((nodeId) => {
+            clearInterval(nodeDrainRef.current[nodeId]);
+            delete nodeDrainRef.current[nodeId];
+        });
+        Object.keys(nodeQueuesRef.current).forEach((nodeId) => {
+            const queue = nodeQueuesRef.current[nodeId];
+            if (queue && queue.length > 0) {
+                const remaining = queue.splice(0).join('');
+                setStreamingNodes((prev) => ({
+                    ...prev,
+                    [nodeId]: (prev[nodeId] || '') + remaining,
+                }));
+            }
+        });
+    }, []);
+
     const token = useAuthStore((state) => state.token);
 
     const connectWs = useCallback((code: string) => {
@@ -156,15 +232,17 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                     case 'node_stream_start':
                         setStreamingNodes((prev) => ({ ...prev, [data.node_id]: '' }));
                         if (callbacksRef.current.onNodeStreamStart) {
-                            callbacksRef.current.onNodeStreamStart(data.node_id);
+                            callbacksRef.current.onNodeStreamStart(data.node_id, data.node_type);
                         }
                         break;
 
                     case 'node_stream_delta':
-                        setStreamingNodes((prev) => ({
-                            ...prev,
-                            [data.node_id]: (prev[data.node_id] || '') + data.content,
-                        }));
+                        // Queue characters for smooth node typewriter effect
+                        if (!nodeQueuesRef.current[data.node_id]) {
+                            nodeQueuesRef.current[data.node_id] = [];
+                        }
+                        nodeQueuesRef.current[data.node_id].push(...data.content.split(''));
+                        startNodeDrain(data.node_id);
                         if (callbacksRef.current.onNodeStreamDelta) {
                             callbacksRef.current.onNodeStreamDelta(data.node_id, data.content);
                         }
@@ -177,20 +255,30 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
                             return next;
                         });
                         if (callbacksRef.current.onNodeStreamDone) {
-                            callbacksRef.current.onNodeStreamDone(data.node_id, data.data);
+                            callbacksRef.current.onNodeStreamDone(data.node_id, data.data, data.action);
                         }
                         break;
                     }
 
                     case 'ai_stream_delta':
-                        setStreamingMessage((prev) => prev + data.content);
+                        // Queue characters for smooth typewriter effect
+                        chatQueueRef.current.push(...data.content.split(''));
+                        startChatDrain();
                         if (callbacksRef.current.onAiStreamDelta) {
                             callbacksRef.current.onAiStreamDelta(data.content);
                         }
                         break;
 
                     case 'ai_stream_done':
-                        setStreamingMessage('');
+                        // Flush any remaining buffered text, then clear
+                        flushAllQueues();
+                        // Use a microtask to ensure flush renders before clearing
+                        setTimeout(() => {
+                            setStreamingMessage('');
+                            setStreamingNodes({});
+                            chatQueueRef.current = [];
+                            nodeQueuesRef.current = {};
+                        }, 50);
                         if (callbacksRef.current.onAiStreamDone) {
                             callbacksRef.current.onAiStreamDone(data.message);
                         }
@@ -279,6 +367,18 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
     }, [connectWs]);
 
     const leaveSession = useCallback(() => {
+        // Clean up typewriter queues
+        if (chatDrainRef.current) {
+            clearInterval(chatDrainRef.current);
+            chatDrainRef.current = null;
+        }
+        chatQueueRef.current = [];
+        Object.keys(nodeDrainRef.current).forEach((nodeId) => {
+            clearInterval(nodeDrainRef.current[nodeId]);
+        });
+        nodeDrainRef.current = {};
+        nodeQueuesRef.current = {};
+
         if (wsRef.current) {
             wsRef.current.close();
             wsRef.current = null;
@@ -341,6 +441,11 @@ export function useCollaboration(callbacks: CollaborationCallbacks = {}): UseCol
             if (typingTimeoutRef.current) {
                 clearTimeout(typingTimeoutRef.current);
             }
+            // Clean up typewriter intervals
+            if (chatDrainRef.current) {
+                clearInterval(chatDrainRef.current);
+            }
+            Object.values(nodeDrainRef.current).forEach((id) => clearInterval(id));
         };
     }, []);
 
